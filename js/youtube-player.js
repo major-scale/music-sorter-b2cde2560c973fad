@@ -1,0 +1,131 @@
+// Thin YouTube IFrame API wrapper.
+//
+// Exposes a global `Player` with:
+//   Player.load(playlistId)          start playing a playlist
+//   Player.next()                    advance to next track
+//   Player.togglePlay()              play/pause
+//   Player.getCurrent()              { videoId, videoTitle, author, durationSec }
+//   Player.listenSeconds()           accumulated play time on current track
+//   Player.onTrackChange(fn)         callback when current videoId changes
+//   Player.onPlayingStarted(fn)      first time playback begins after a track load
+//
+// The YouTube IFrame API calls window.onYouTubeIframeAPIReady() once loaded.
+
+window.Player = (() => {
+  let yt = null;
+  let ready = false;
+  const readyQueue = [];
+  let listenAccumulatedMs = 0;
+  let lastPlayingStartedAt = null;
+  let currentVideoId = null;
+  let pendingPlaylistId = null;
+  const trackChangeCbs = [];
+  const playingStartedCbs = [];
+  let firstPlayingFired = false;
+  let lastOverlayCleared = false;
+
+  function onReady(cb) { if (ready) cb(); else readyQueue.push(cb); }
+
+  function init() {
+    yt = new YT.Player("player", {
+      width: "100%",
+      height: "100%",
+      playerVars: {
+        playsinline: 1,
+        rel: 0,
+        modestbranding: 1,
+        autoplay: 0,
+      },
+      events: {
+        onReady: () => {
+          ready = true;
+          readyQueue.splice(0).forEach((cb) => cb());
+          if (pendingPlaylistId) {
+            yt.loadPlaylist({ list: pendingPlaylistId, listType: "playlist" });
+            pendingPlaylistId = null;
+          }
+        },
+        onStateChange: handleState,
+        onError: (e) => console.warn("YT error", e?.data),
+      },
+    });
+  }
+
+  function handleState(e) {
+    // PLAYING=1, PAUSED=2, ENDED=0, BUFFERING=3, CUED=5, UNSTARTED=-1
+    const data = yt.getVideoData ? yt.getVideoData() : null;
+    const videoId = data?.video_id || null;
+
+    if (videoId && videoId !== currentVideoId) {
+      currentVideoId = videoId;
+      listenAccumulatedMs = 0;
+      lastPlayingStartedAt = null;
+      firstPlayingFired = false;
+      trackChangeCbs.forEach((cb) => cb(currentInfo()));
+    }
+
+    if (e.data === YT.PlayerState.PLAYING) {
+      if (lastPlayingStartedAt == null) lastPlayingStartedAt = performance.now();
+      if (!firstPlayingFired) {
+        firstPlayingFired = true;
+        playingStartedCbs.forEach((cb) => cb(currentInfo()));
+      }
+    } else {
+      // Pause / buffer / end / cued — accumulate up to now
+      if (lastPlayingStartedAt != null) {
+        listenAccumulatedMs += performance.now() - lastPlayingStartedAt;
+        lastPlayingStartedAt = null;
+      }
+    }
+  }
+
+  function currentInfo() {
+    const data = yt && yt.getVideoData ? yt.getVideoData() : null;
+    if (!data) return null;
+    let duration = 0;
+    try { duration = yt.getDuration() || 0; } catch (_) {}
+    return {
+      videoId: data.video_id,
+      videoTitle: data.title,
+      author: data.author,
+      durationSec: duration,
+    };
+  }
+
+  return {
+    init,
+    onReady,
+    load(playlistId) {
+      onReady(() => yt.loadPlaylist({ list: playlistId, listType: "playlist" }));
+      if (!ready) pendingPlaylistId = playlistId;
+    },
+    next() {
+      onReady(() => yt.nextVideo());
+    },
+    play() {
+      onReady(() => yt.playVideo());
+    },
+    pause() {
+      onReady(() => yt.pauseVideo());
+    },
+    togglePlay() {
+      onReady(() => {
+        const s = yt.getPlayerState();
+        if (s === YT.PlayerState.PLAYING) yt.pauseVideo(); else yt.playVideo();
+      });
+    },
+    seek(seconds) { onReady(() => yt.seekTo(seconds, true)); },
+    getCurrent: currentInfo,
+    listenSeconds() {
+      let ms = listenAccumulatedMs;
+      if (lastPlayingStartedAt != null) ms += performance.now() - lastPlayingStartedAt;
+      return ms / 1000;
+    },
+    onTrackChange(fn)     { trackChangeCbs.push(fn); },
+    onPlayingStarted(fn)  { playingStartedCbs.push(fn); },
+  };
+})();
+
+window.onYouTubeIframeAPIReady = function () {
+  window.Player.init();
+};

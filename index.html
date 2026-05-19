@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#1a1a1a">
+<meta name="description" content="Rate tracks for personal recommender training">
+<title>Sorter</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- Stats bar (always visible, compact) -->
+<header id="stats-bar" class="stats-bar">
+  <button id="stats-toggle" class="stats-compact" aria-label="Show stats">
+    <span id="stat-total">0</span>
+    <span class="stat-mini love" title="LOVE"><span id="stat-love">0</span></span>
+    <span class="stat-mini mid"  title="MID"><span id="stat-mid">0</span></span>
+    <span class="stat-mini slop" title="SLOP"><span id="stat-slop">0</span></span>
+    <span class="stat-mini kappa" title="Intra-rater consistency κ">κ <span id="stat-kappa">—</span></span>
+  </button>
+  <button id="open-queue" class="ghost-btn" aria-label="Change queue">Queue</button>
+  <button id="open-menu" class="ghost-btn" aria-label="Menu">☰</button>
+</header>
+
+<!-- Player area -->
+<main id="player-area" class="player-area">
+
+  <div id="player-shell" class="player-shell">
+    <div id="player" aria-label="YouTube player"></div>
+    <div id="player-overlay" class="player-overlay hidden" role="button" tabindex="0">
+      <div class="overlay-inner">
+        <div class="overlay-title">Tap to start</div>
+        <div class="overlay-sub">YouTube needs a tap before it can autoplay on mobile.</div>
+      </div>
+    </div>
+  </div>
+
+  <section id="track-meta" class="track-meta">
+    <div class="meta-row">
+      <input id="meta-artist" class="meta-input" placeholder="Artist" aria-label="Artist">
+      <span class="meta-dash">—</span>
+      <input id="meta-title"  class="meta-input" placeholder="Title"  aria-label="Title">
+    </div>
+    <div class="meta-row video-title-row">
+      <span class="meta-label">video title:</span>
+      <span id="meta-video-title" class="meta-video-title"></span>
+    </div>
+  </section>
+
+  <!-- Rating row -->
+  <section id="rating-row" class="rating-row" aria-label="Rate this track">
+    <button id="btn-slop" class="rate-btn slop" data-rating="SLOP">
+      <span class="rate-label">SLOP</span>
+      <span class="rate-key">1</span>
+    </button>
+    <button id="btn-mid"  class="rate-btn mid" data-rating="MID">
+      <span class="rate-label">MID</span>
+      <span class="rate-key">2</span>
+    </button>
+    <button id="btn-love" class="rate-btn love" data-rating="LOVE">
+      <span class="rate-label">LOVE</span>
+      <span class="rate-key">3</span>
+    </button>
+  </section>
+
+  <!-- Quick actions -->
+  <section id="quick-actions" class="quick-actions">
+    <button id="btn-skip"   class="ghost-btn small">Skip</button>
+    <button id="btn-unavailable" class="ghost-btn small">Unavailable</button>
+  </section>
+
+  <!-- More-detail (5-pt + notes) -->
+  <section id="more-detail" class="more-detail collapsed">
+    <button id="more-toggle" class="ghost-btn small" aria-expanded="false">More detail ▾</button>
+    <div class="more-body">
+      <div class="five-point" role="radiogroup" aria-label="5-point rating">
+        <button class="fp-btn" data-fp="1">1<span>hate</span></button>
+        <button class="fp-btn" data-fp="2">2<span>dislike</span></button>
+        <button class="fp-btn" data-fp="3">3<span>mid</span></button>
+        <button class="fp-btn" data-fp="4">4<span>like</span></button>
+        <button class="fp-btn" data-fp="5">5<span>love</span></button>
+      </div>
+      <input id="notes-input" class="notes-input" placeholder="notes (great build, weak drop, …)" maxlength="200">
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+</main>
+
+<!-- Queue selector modal -->
+<dialog id="queue-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Pick a queue</h2>
+
+    <section class="modal-section">
+      <h3 class="modal-section-title">Preset playlists</h3>
+      <ul id="preset-list" class="preset-list"></ul>
+      <button type="button" id="add-preset" class="ghost-btn small">+ Add preset</button>
+    </section>
+
+    <section class="modal-section">
+      <h3 class="modal-section-title">Custom YouTube playlist URL</h3>
+      <input id="custom-url" class="modal-input" placeholder="https://www.youtube.com/playlist?list=PL…">
+      <button type="button" id="load-custom" class="primary-btn">Load this playlist</button>
+    </section>
+
+    <section class="modal-section">
+      <h3 class="modal-section-title">Already-rated handling</h3>
+      <label class="checkbox-row">
+        <input type="checkbox" id="opt-skip-rated" checked>
+        Skip tracks I've already rated
+      </label>
+      <p class="modal-note" id="rated-count-note">0 tracks rated so far.</p>
+    </section>
+
+    <div class="modal-footer">
+      <button type="button" id="close-queue" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Stats modal -->
+<dialog id="stats-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Stats</h2>
+    <div id="stats-detail"></div>
+    <h3 class="modal-section-title">Export</h3>
+    <div class="export-row">
+      <button type="button" id="export-download" class="primary-btn">Download JSON</button>
+      <button type="button" id="export-clipboard" class="ghost-btn">Copy</button>
+      <button type="button" id="export-share" class="ghost-btn">Share</button>
+    </div>
+    <div class="modal-footer">
+      <button type="button" id="close-stats" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Menu modal -->
+<dialog id="menu-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Menu</h2>
+    <ul class="menu-list">
+      <li><button type="button" id="menu-stats" class="menu-item">Stats &amp; export</button></li>
+      <li>
+        <button type="button" id="menu-sync" class="menu-item">
+          Live sync to file <span id="menu-sync-state" class="menu-item-hint">— off</span>
+        </button>
+        <div class="menu-item-sub">Pick once; every rating writes the full JSON to that file. Recommended path: <code>~/myMusic/personalPreference/data/sorter_live.json</code> (so Claude can read it).</div>
+      </li>
+      <li><button type="button" id="menu-queue" class="menu-item">Change queue</button></li>
+      <li><button type="button" id="menu-install" class="menu-item">Install as app</button></li>
+      <li><button type="button" id="menu-keyhint" class="menu-item">Keyboard / gestures</button></li>
+      <li><button type="button" id="menu-recent" class="menu-item">Recent ratings</button></li>
+      <li><button type="button" id="menu-clear-session" class="menu-item danger">Clear current session only</button></li>
+      <li><button type="button" id="menu-clear-all"     class="menu-item danger">Clear all ratings</button></li>
+    </ul>
+    <div class="modal-footer">
+      <button type="button" id="close-menu" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Keyboard / gestures hint modal -->
+<dialog id="hint-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Shortcuts</h2>
+    <dl class="hint-list">
+      <dt>1 / 2 / 3</dt><dd>SLOP / MID / LOVE</dd>
+      <dt>Space</dt>    <dd>Play / pause</dd>
+      <dt>→ / N</dt>    <dd>Skip (next track)</dd>
+      <dt>Swipe ← / →</dt><dd>SLOP / LOVE (mobile)</dd>
+      <dt>Swipe ↑</dt>  <dd>MID (mobile)</dd>
+    </dl>
+    <div class="modal-footer">
+      <button type="button" id="close-hint" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Recent ratings modal -->
+<dialog id="recent-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Recent ratings</h2>
+    <ol id="recent-list" class="recent-list"></ol>
+    <div class="modal-footer">
+      <button type="button" id="close-recent" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script src="js/queue-manager.js"></script>
+<script src="js/rating-manager.js"></script>
+<script src="js/youtube-player.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/export.js"></script>
+<script src="js/pwa.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
