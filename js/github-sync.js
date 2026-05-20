@@ -99,6 +99,43 @@ window.GithubSync = (() => {
     }, 1500);
   }
 
+  function decodeB64(b64) {
+    const bin = atob((b64 || "").replace(/\n/g, ""));
+    const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+
+  // Pull every device's file from the repo and merge into this instance via
+  // Ratings.importPayload (newest rated_at wins). Makes any instance converge to
+  // the full cross-device history.
+  async function pullMerge() {
+    const c = getConfig();
+    if (!isEnabled()) return 0;
+    const listResp = await fetch(
+      `https://api.github.com/repos/${c.owner}/${c.repo}/contents/data?ref=${c.branch}`,
+      { headers: headers(c) }
+    );
+    if (listResp.status === 404) return 0;
+    if (!listResp.ok) throw new Error(`list ${listResp.status}`);
+    const files = await listResp.json();
+    let merged = 0;
+    for (const f of files) {
+      if (f.type !== "file" || !/^ratings-.*\.json$/.test(f.name)) continue;
+      const fr = await fetch(
+        `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${f.path}?ref=${c.branch}`,
+        { headers: headers(c) }
+      );
+      if (!fr.ok) continue;
+      const j = await fr.json();
+      try {
+        const payload = JSON.parse(decodeB64(j.content));
+        const r = window.Ratings.importPayload(payload);
+        merged += r.added + r.updated;
+      } catch (_) {}
+    }
+    return merged;
+  }
+
   async function test() {
     const c = getConfig();
     if (!c.token) throw new Error("no token set");
@@ -107,5 +144,5 @@ window.GithubSync = (() => {
     return true;
   }
 
-  return { getConfig, setConfig, isEnabled, flush, pushNow, test, getDeviceId, filePath };
+  return { getConfig, setConfig, isEnabled, flush, pushNow, pullMerge, test, getDeviceId, filePath };
 })();

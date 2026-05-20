@@ -44,6 +44,14 @@
     if (on) PWA.showToast("Live sync resumed", 1200);
   });
 
+  // Pull + merge cloud history on load so this instance converges to the full
+  // cross-device, cross-origin history (only if a token is configured here).
+  if (GithubSync.isEnabled()) {
+    GithubSync.pullMerge()
+      .then((n) => { if (n) { Stats.refreshCompact(); updateRatedCountNote(); PWA.showToast(`Synced ${n} ratings from cloud`, 2500); } })
+      .catch((err) => console.warn("cloud pull failed", err));
+  }
+
   if (!active) {
     openModal("queue-modal");
   } else {
@@ -501,6 +509,25 @@
     PWA.showToast("Settings saved", 1200);
   });
   $("close-settings").addEventListener("click", () => closeModal("settings-modal"));
+
+  $("import-file").addEventListener("change", async (e) => {
+    const files = Array.from(e.target.files || []);
+    let added = 0, updated = 0, failed = 0;
+    for (const f of files) {
+      try {
+        const payload = JSON.parse(await f.text());
+        const r = Ratings.importPayload(payload);
+        added += r.added; updated += r.updated;
+      } catch (err) { failed++; }
+    }
+    Stats.refreshCompact();
+    updateRatedCountNote();
+    syncAll();
+    const msg = `Imported: +${added} new, ${updated} updated${failed ? `, ${failed} failed` : ""}. Total now ${Ratings.counts().total}.`;
+    $("import-status").textContent = msg;
+    PWA.showToast(msg, 3500);
+    e.target.value = "";
+  });
 
   function renderGhStatus() {
     const c = GithubSync.getConfig();

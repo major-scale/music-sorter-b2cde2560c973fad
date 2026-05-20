@@ -358,6 +358,28 @@ window.Ratings = (() => {
     return existing;
   }
 
+  // Merge an exported payload into this instance's storage. By track_id; the newer
+  // rated_at wins. Also merges batch registry entries. Returns a small report.
+  function importPayload(payload) {
+    let added = 0, updated = 0;
+    for (const t of (payload && payload.tracks) || []) {
+      if (!t || !t.track_id) continue;
+      const ex = ratings[t.track_id];
+      if (!ex) { ratings[t.track_id] = t; added++; }
+      else if ((t.rated_at || "") > (ex.rated_at || "")) { ratings[t.track_id] = t; updated++; }
+    }
+    saveJSON(KEY, ratings);
+
+    const batches = getBatches();
+    const seen = new Set(batches.map((b) => b.batch_id));
+    for (const b of (payload && payload.batches) || []) {
+      if (b && b.batch_id && !seen.has(b.batch_id)) { batches.push(b); seen.add(b.batch_id); }
+    }
+    saveJSON(BATCHES_KEY, batches);
+
+    return { added, updated, total: Object.keys(ratings).length };
+  }
+
   function clearAll() {
     ratings = {};
     consistency = [];
@@ -402,7 +424,7 @@ window.Ratings = (() => {
 
   return {
     parseTitle, cleanTitle, getRating, getRatedIds, getAll, getConsistency,
-    counts, kappa, rate, deleteRating, putRecord, reRate, clearAll, clearSession, getSession,
+    counts, kappa, rate, deleteRating, putRecord, reRate, importPayload, clearAll, clearSession, getSession,
     maybeQueueConsistencyCheck, setConsistencyTarget, isConsistencyTarget, clearConsistencyTarget,
     getPresets, setPresets,
     getSettings, saveSettings,

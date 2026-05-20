@@ -254,6 +254,11 @@
     </div>
     <p class="modal-note" id="gh-status">Token is stored only on this device. Use a fine-grained PAT scoped to just the backup repo (Contents: read &amp; write).</p>
 
+    <h3 class="modal-section-title">Import / restore</h3>
+    <p class="modal-note">Ratings are stored per-site (localhost:8000, localhost:8765, and the github.io URL are separate). Import an export here to load history into <em>this</em> instance — merges by track, newest wins.</p>
+    <input type="file" id="import-file" accept="application/json,.json" multiple>
+    <p class="modal-note" id="import-status"></p>
+
     <div class="modal-footer">
       <button type="button" id="save-settings" class="primary-btn">Save</button>
       <button type="button" id="close-settings" class="ghost-btn">Close</button>
