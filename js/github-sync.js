@@ -16,9 +16,11 @@ window.GithubSync = (() => {
   };
   let timer = null;
   let chain = Promise.resolve();  // serializes pushes so they never overlap
+  let lastSha;                    // authoritative sha from our last successful PUT (avoids stale-cache reads)
 
   const _log = (...a) => console.info("%c[GithubSync]", "color:#7c4dff", ...a);
   const _warn = (...a) => console.warn("[GithubSync]", ...a);
+  const _err = (...a) => console.error("[GithubSync]", ...a);  // always visible at default console level
 
   function getDeviceId() {
     let id = localStorage.getItem(DEVICE_KEY);
@@ -58,8 +60,10 @@ window.GithubSync = (() => {
   }
 
   async function getSha(c) {
-    const url = `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${filePath()}?ref=${c.branch}`;
-    const resp = await fetch(url, { headers: headers(c) });
+    // Cache-bust + no-cache: GitHub's Contents API can serve a stale sha from CDN
+    // right after a write, which causes persistent 409s on the next push.
+    const url = `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${filePath()}?ref=${c.branch}&_cb=${Date.now()}`;
+    const resp = await fetch(url, { headers: { ...headers(c), "Cache-Control": "no-cache" } });
     if (resp.status === 404) { _log("getSha → new file (404)"); return null; }
     if (!resp.ok) {
       const msg = await errMessage(resp);
@@ -87,7 +91,10 @@ window.GithubSync = (() => {
     const content = b64(JSON.stringify(payload, null, 2));
     _log(`push: ${payload.metadata.total_tracks} tracks → ${filePath()} (attempt ${attempt + 1})`);
 
-    const sha = await getSha(c);
+    // Prefer the sha from our last successful PUT; only read from the API when unknown.
+    let sha = lastSha;
+    if (sha === undefined) sha = await getSha(c);
+
     const url = `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${filePath()}`;
     const body = { message: `sync ${payload.metadata.total_tracks} tracks from ${getDeviceId()}`, content, branch: c.branch };
     if (sha) body.sha = sha;
@@ -98,17 +105,20 @@ window.GithubSync = (() => {
       body: JSON.stringify(body),
     });
 
-    if (resp.status === 409 && attempt < 2) {
-      _warn("409 sha-conflict — refetching and retrying");
+    if (resp.status === 409 && attempt < 3) {
+      _warn("409 sha-conflict — forcing a fresh sha read and retrying");
+      lastSha = await getSha(c);   // cache-busted fresh read
       return doPush(c, attempt + 1);
     }
     if (!resp.ok) {
       const msg = await errMessage(resp);
       setConfig({ lastError: msg });
-      _warn("PUT failed:", msg, "(see Settings → status for the saved error)");
+      _err("PUT failed:", msg, "(also saved to Settings → status)");
       throw new Error(msg);
     }
-    _log(`PUT → ${resp.status} OK`);
+    const j = await resp.json().catch(() => null);
+    lastSha = (j && j.content && j.content.sha) || undefined;
+    _log(`PUT → ${resp.status} OK; new sha ${lastSha ? lastSha.slice(0, 7) : "?"}`);
     setConfig({ lastSync: new Date().toISOString(), lastError: null });
     return true;
   }
@@ -131,6 +141,7 @@ window.GithubSync = (() => {
     clearTimeout(timer);
     timer = setTimeout(() => {
       enqueuePush().catch((e) => {
+        _err("backup failed:", e.message);
         window.PWA && PWA.showToast("Cloud backup failed: " + e.message, 4500);
       });
     }, 1500);
@@ -183,7 +194,7 @@ window.GithubSync = (() => {
     const resp = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}`, { headers: headers(c) });
     if (!resp.ok) {
       const msg = await errMessage(resp);
-      _warn("test failed:", msg, "— 404 usually = token can't see the repo (resource owner / repo selection)");
+      _err("test failed:", msg, "— 404 usually = token can't see the repo (resource owner / repo selection)");
       throw new Error(`repo access failed (${msg})`);
     }
     _log("test: OK, repo reachable");
