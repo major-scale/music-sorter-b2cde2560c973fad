@@ -21,6 +21,7 @@ window.Player = (() => {
   let pendingPlaylistId = null;
   const trackChangeCbs = [];
   const playingStartedCbs = [];
+  const playStateCbs = [];      // fired with true on PLAYING, false on PAUSED/ENDED
   let firstPlayingFired = false;
   let startOffsetSec = 0;       // auto-seek to this position on each new track
   let seekedThisTrack = false;
@@ -81,11 +82,15 @@ window.Player = (() => {
         firstPlayingFired = true;
         playingStartedCbs.forEach((cb) => cb(currentInfo()));
       }
+      playStateCbs.forEach((cb) => cb(true));
     } else {
       // Pause / buffer / end / cued — accumulate up to now
       if (lastPlayingStartedAt != null) {
         listenAccumulatedMs += performance.now() - lastPlayingStartedAt;
         lastPlayingStartedAt = null;
+      }
+      if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED) {
+        playStateCbs.forEach((cb) => cb(false));
       }
     }
   }
@@ -174,6 +179,7 @@ window.Player = (() => {
     },
     onTrackChange(fn)     { trackChangeCbs.push(fn); },
     onPlayingStarted(fn)  { playingStartedCbs.push(fn); },
+    onPlayStateChange(fn) { playStateCbs.push(fn); },
   };
 })();
 

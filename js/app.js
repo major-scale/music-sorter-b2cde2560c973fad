@@ -28,10 +28,9 @@
   let suppressAutoSkipOnce = false;
   let undoState = null;        // { youtubeId, prevRecord|null }
   let resumeChecked = false;   // jump-to-first-unrated only once per load
-  // decision timer: accumulates only "active" time, frozen while stopped or tab hidden
-  let decisionAccumMs = 0;
-  let decisionRunningSince = 0;   // perf ts while running; 0 = frozen
-  let globallyStopped = false;
+  // timer tracks actual seconds played (Player.listenSeconds); globallyStopped mirrors
+  // the YouTube player's real paused state (synced both ways via onPlayStateChange).
+  let globallyStopped = true;
 
   // ----------------- bootstrap -----------------
 
@@ -41,13 +40,9 @@
   renderPresets();
   updateRatedCountNote();
   applySettings();
-  setInterval(updateRateTimer, 500);   // live per-track decision timer
+  setInterval(updateRateTimer, 500);   // live played-seconds display
   updateStopButton();
   $("btn-stop").addEventListener("click", toggleStop);
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) freezeDecisionTimer();
-    else if (!globallyStopped) unfreezeDecisionTimer();
-  });
 
   // Resume live-sync silently if a handle was previously stored
   Sync.tryRestore().then((on) => {
@@ -76,6 +71,12 @@
 
   Player.onTrackChange((info) => onTrack(info));
   Player.onPlayingStarted(() => overlay.classList.add("hidden"));
+  // Mirror the YouTube player's real play/pause state onto the global stop + timer.
+  Player.onPlayStateChange((playing) => {
+    globallyStopped = !playing;
+    updateStopButton();
+    updateRateTimer();
+  });
 
   // ----------------- queue modal -----------------
 
@@ -157,7 +158,6 @@
   function onTrack(info) {
     if (!info) return;
     trackInfo = info;
-    startDecisionTimer();
     resetTrackUI(info);
     Stats.refreshCompact();
     updateRatedCountNote();
@@ -220,43 +220,24 @@
     }
   }
 
-  function startDecisionTimer() {
-    decisionAccumMs = 0;
-    decisionRunningSince = (globallyStopped || document.hidden) ? 0 : performance.now();
-  }
-  function freezeDecisionTimer() {
-    if (decisionRunningSince) { decisionAccumMs += performance.now() - decisionRunningSince; decisionRunningSince = 0; }
-  }
-  function unfreezeDecisionTimer() {
-    if (!decisionRunningSince && !globallyStopped && !document.hidden && trackInfo) decisionRunningSince = performance.now();
-  }
-  function decisionSeconds() {
-    let ms = decisionAccumMs;
-    if (decisionRunningSince) ms += performance.now() - decisionRunningSince;
-    return ms / 1000;
-  }
-
+  // Toggling just drives the player; globallyStopped + button update via onPlayStateChange.
   function toggleStop() {
-    globallyStopped = !globallyStopped;
-    if (globallyStopped) { freezeDecisionTimer(); Player.pause(); }
-    else { Player.play(); unfreezeDecisionTimer(); }
-    updateStopButton();
-    updateRateTimer();
+    if (globallyStopped) Player.play(); else Player.pause();
   }
   function updateStopButton() {
     const b = $("btn-stop");
     if (!b) return;
     b.textContent = globallyStopped ? "▶" : "⏸";
     b.classList.toggle("stopped", globallyStopped);
-    b.title = globallyStopped ? "Resume clock & playback" : "Pause clock & playback";
+    b.title = globallyStopped ? "Resume playback" : "Pause playback";
   }
 
   function updateRateTimer() {
     const el = $("rate-timer");
     if (!el) return;
-    if (globallyStopped) { el.textContent = "⏸ paused"; return; }
     if (!trackInfo) { el.textContent = ""; return; }
-    el.textContent = `⏱ ${decisionSeconds().toFixed(0)}s`;
+    const s = Player.listenSeconds();   // actual accumulated playback seconds for this track
+    el.textContent = `${globallyStopped ? "⏸" : "▶"} ${s.toFixed(0)}s played`;
   }
 
   function updateQueueProgress() {
@@ -358,8 +339,7 @@
     // capture state for undo (before overwrite)
     undoState = { youtubeId: trackInfo.videoId, prevRecord: Ratings.getRating(trackInfo.videoId) };
 
-    const timeToRate = decisionSeconds();
-    freezeDecisionTimer();   // pause until the next track loads
+    const timeToRate = Player.listenSeconds();   // actual seconds of the song played before deciding
 
     const record = Ratings.rate({
       youtubeId: trackInfo.videoId,

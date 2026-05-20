@@ -85,7 +85,7 @@ window.Stats = (() => {
         <div><strong>${k == null ? "—" : k.toFixed(2)}</strong><br><span class="dim">κ consistency</span></div>
       </div>
 
-      <h3 class="modal-section-title">Rating speed (decision time)</h3>
+      <h3 class="modal-section-title">Rating speed (seconds played before rating)</h3>
       <ul class="dim-list">
         ${speed.hasData ? `
         <li>overall: <strong>${speed.overall}</strong></li>
