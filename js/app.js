@@ -144,14 +144,22 @@
     const skipSuppressed = suppressAutoSkipOnce;
     suppressAutoSkipOnce = false;
 
-    // Already-rated handling: skip if user opted in, not a consistency check,
-    // and not currently navigating backward to review/re-rate.
+    // Already-rated handling (cross-batch): skip if user opted in, not a consistency
+    // check, and not currently navigating backward to review/re-rate. Jumps over a
+    // whole run of already-rated tracks in one hop rather than stepping through them.
     if (active && active.skipRated && !skipSuppressed) {
       const rated = Ratings.getRating(info.videoId);
       const isConsistencyTarget = pendingConsistency && pendingConsistency.youtube_id === info.videoId;
       if (rated && !isConsistencyTarget) {
-        PWA.showToast(`Already rated as ${rated.rating_3class} — skipping`, 1500);
-        setTimeout(() => Player.next(), 500);
+        const idx = Player.getPlaylistIndex();
+        const nxt = nextUnratedIndex(idx);
+        if (nxt >= 0) {
+          const jumped = nxt - idx;
+          PWA.showToast(jumped > 1 ? `Skipping ${jumped} already-rated` : `Already rated ${rated.rating_3class} — skipping`, 1400);
+          Player.playAt(nxt);
+        } else {
+          PWA.showToast("All remaining tracks already rated — switch queue or turn off skip", 3500);
+        }
         return;
       }
     }
@@ -198,17 +206,33 @@
     el.textContent = `track ${idx + 1} / ${list.length} · ${unrated} unrated`;
   }
 
+  function nextUnratedIndex(fromIndex) {
+    const list = Player.getPlaylist();
+    if (!list.length) return -1;
+    const rated = Ratings.getRatedIds();
+    for (let i = fromIndex + 1; i < list.length; i++) {
+      if (!rated.has(list[i])) return i;
+    }
+    return -1;
+  }
+
   function maybeResume() {
     if (resumeChecked) return;
-    resumeChecked = true;
-    if (!active || !active.skipRated) return;
     const list = Player.getPlaylist();
-    if (!list.length) { resumeChecked = false; return; } // playlist not ready yet; retry next track event
+    if (!list.length) return; // playlist not ready yet; retry on next track event
+    resumeChecked = true;
+
     const rated = Ratings.getRatedIds();
+    const ratedCount = list.filter((id) => rated.has(id)).length;
+    if (ratedCount > 0) {
+      PWA.showToast(`${list.length} tracks · ${ratedCount} already rated across all batches`, 2800);
+    }
+    if (!active || !active.skipRated) return;
     const firstUnrated = list.findIndex((id) => !rated.has(id));
     const idx = Player.getPlaylistIndex();
-    if (firstUnrated > idx) {
-      PWA.showToast(`Resuming at first unrated (track ${firstUnrated + 1})`, 1800);
+    if (firstUnrated === -1) {
+      PWA.showToast("Every track in this playlist is already rated — switch queue or turn off skip", 4000);
+    } else if (firstUnrated > idx) {
       Player.playAt(firstUnrated);
     }
   }
