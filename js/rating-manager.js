@@ -342,7 +342,8 @@ window.Ratings = (() => {
     const r = ratings[id];
     if (!r || !meta) return false;
     for (const k of ["channel_title", "published_at", "duration_seconds", "tags",
-                     "yt_title", "yt_artist", "yt_album", "yt_label", "yt_release_date", "enriched_at"]) {
+                     "yt_title", "yt_artist", "yt_album", "yt_label", "yt_release_date",
+                     "view_count", "like_count", "is_music_category", "topics", "default_language", "enriched_at"]) {
       if (meta[k] != null && !(Array.isArray(meta[k]) && meta[k].length === 0)) r[k] = meta[k];
     }
     if (!r.artist && meta.yt_artist) r.artist = meta.yt_artist;

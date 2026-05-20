@@ -180,6 +180,8 @@ button, input { font-family: inherit; color: inherit; }
 .video-title-row { font-size: 12px; color: var(--text-dim); }
 .queue-progress { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
 .rate-timer { font-family: var(--mono); font-size: 12px; color: var(--accent); margin-left: 10px; }
+.enriched-meta { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.enriched-meta .label { color: var(--love); }
 .current-rating { font-family: var(--mono); font-size: 12px; margin-left: auto; }
 .current-rating.LOVE { color: var(--love); }
 .current-rating.MID  { color: var(--text-dim); }

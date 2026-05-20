@@ -53,9 +53,19 @@ window.YTMeta = (() => {
     return out;
   }
 
+  // topicCategories are Wikipedia URLs, e.g. .../wiki/Electronic_music → "Electronic music"
+  function parseTopics(topicDetails) {
+    const urls = (topicDetails && topicDetails.topicCategories) || [];
+    return urls.map((u) => {
+      try { return decodeURIComponent(u.split("/").pop().replace(/_/g, " ")); }
+      catch (_) { return null; }
+    }).filter(Boolean);
+  }
+
   function snippetToMeta(item) {
     const s = item.snippet || {};
     const c = item.contentDetails || {};
+    const st = item.statistics || {};
     const music = parseMusicDescription(s.description);
     return {
       channel_title: s.channelTitle || null,
@@ -67,6 +77,11 @@ window.YTMeta = (() => {
       yt_album: music.album || null,
       yt_label: music.label || null,
       yt_release_date: music.release_date || (music.release_year ? `${music.release_year}` : null),
+      view_count: st.viewCount != null ? +st.viewCount : null,
+      like_count: st.likeCount != null ? +st.likeCount : null,
+      is_music_category: s.categoryId === "10",
+      topics: parseTopics(item.topicDetails),
+      default_language: s.defaultAudioLanguage || null,
       enriched_at: new Date().toISOString(),
     };
   }
@@ -74,7 +89,7 @@ window.YTMeta = (() => {
   async function call(ids) {
     const key = getKey();
     if (!key) throw new Error("no API key set");
-    const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${ids.join(",")}&key=${key}`;
+    const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics,topicDetails&id=${ids.join(",")}&key=${key}`;
     const resp = await fetch(url);
     if (!resp.ok) {
       let msg = `${resp.status}`;

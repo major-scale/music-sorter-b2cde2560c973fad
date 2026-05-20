@@ -190,6 +190,7 @@
 
     // Reflect an existing rating so the user can re-rate intentionally.
     showExistingRating(info.videoId);
+    showEnrichedMeta(info.videoId);
 
     // Apply consistency target if this is the inserted re-rate
     if (pendingConsistency && pendingConsistency.youtube_id === info.videoId) {
@@ -238,6 +239,33 @@
     if (!trackInfo) { el.textContent = ""; return; }
     const s = Player.listenSeconds();   // actual accumulated playback seconds for this track
     el.textContent = `${globallyStopped ? "⏸" : "▶"} ${s.toFixed(0)}s played`;
+  }
+
+  function fmtDur(sec) {
+    if (!sec) return "";
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+  function fmtViews(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    if (n >= 1e3) return Math.round(n / 1e3) + "K";
+    return String(n);
+  }
+
+  function showEnrichedMeta(youtubeId) {
+    const el = $("enriched-meta");
+    if (!el) return;
+    const r = Ratings.getRating(youtubeId);
+    if (!r) { el.innerHTML = ""; return; }
+    const bits = [];
+    if (r.yt_label) bits.push(`<span class="label">🏷 ${r.yt_label}</span>`);
+    if (r.yt_release_date) bits.push(`released ${r.yt_release_date}`);
+    else if (r.published_at) bits.push(`uploaded ${r.published_at.slice(0, 10)}`);
+    if (r.channel_title) bits.push(r.channel_title);
+    if (r.duration_seconds) bits.push(fmtDur(r.duration_seconds));
+    if (r.view_count) bits.push(fmtViews(r.view_count) + " views");
+    if (r.topics && r.topics.length) bits.push(r.topics.slice(0, 2).join(", "));
+    el.innerHTML = bits.join(" · ");
   }
 
   function updateQueueProgress() {
@@ -323,6 +351,7 @@
     notesInput.value = "";
     selected5pt = null;
     document.querySelectorAll(".fp-btn").forEach((b) => b.classList.remove("selected"));
+    const em = $("enriched-meta"); if (em) em.innerHTML = "";
   }
 
   // ----------------- rating -----------------
@@ -363,7 +392,7 @@
     // Enrich with YouTube Data API metadata (async; re-saves + re-syncs when it lands)
     if (YTMeta.isEnabled() && !record.enriched_at) {
       YTMeta.lookup(record.youtube_id)
-        .then((meta) => { if (meta && Ratings.enrich(record.youtube_id, meta)) { if (trackInfo && trackInfo.videoId === record.youtube_id) showExistingRating(record.youtube_id); syncAll(); } })
+        .then((meta) => { if (meta && Ratings.enrich(record.youtube_id, meta)) { if (trackInfo && trackInfo.videoId === record.youtube_id) { showExistingRating(record.youtube_id); showEnrichedMeta(record.youtube_id); } syncAll(); } })
         .catch((e) => console.warn("[YTMeta] enrich failed", e.message));
     }
 
@@ -727,7 +756,8 @@
       const li = document.createElement("li");
       li.className = r.rating_3class;
       const label = document.createElement("span");
-      label.textContent = `${r.rating_3class} — ${r.artist || "?"} — ${r.title || r.video_title || "?"}`;
+      const extra = [r.yt_release_date || (r.year || ""), r.yt_label].filter(Boolean).join(" · ");
+      label.textContent = `${r.rating_3class} — ${r.artist || "?"} — ${r.title || r.video_title || "?"}${extra ? "  ·  " + extra : ""}`;
       const edit = document.createElement("span");
       edit.className = "recent-edit";
       edit.innerHTML =
