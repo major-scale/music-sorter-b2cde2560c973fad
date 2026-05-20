@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v17-2026-05-20-playstate-sync";
+const VERSION = "v18-2026-05-20-yt-metadata";
 const SHELL = [
   "./",
   "./index.html",
@@ -14,6 +14,7 @@ const SHELL = [
   "./js/pwa.js",
   "./js/sync.js",
   "./js/github-sync.js",
+  "./js/youtube-meta.js",
   "./icons/icon.svg",
   "./icons/icon-maskable.svg",
 ];

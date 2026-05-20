@@ -336,6 +336,28 @@ window.Ratings = (() => {
     return record;
   }
 
+  // Merge YouTube Data API metadata into a stored record (fills artist/title if empty).
+  function enrich(youtubeId, meta) {
+    const id = `yt:${youtubeId}`;
+    const r = ratings[id];
+    if (!r || !meta) return false;
+    for (const k of ["channel_title", "published_at", "duration_seconds", "tags",
+                     "yt_title", "yt_artist", "yt_album", "yt_label", "yt_release_date", "enriched_at"]) {
+      if (meta[k] != null && !(Array.isArray(meta[k]) && meta[k].length === 0)) r[k] = meta[k];
+    }
+    if (!r.artist && meta.yt_artist) r.artist = meta.yt_artist;
+    if ((!r.title || r.title === r.video_title) && meta.yt_title) r.title = meta.yt_title;
+    if (meta.yt_release_date && /^\d{4}/.test(meta.yt_release_date)) r.year = parseInt(meta.yt_release_date, 10);
+    saveJSON(KEY, ratings);
+    return true;
+  }
+
+  function unenrichedIds() {
+    return Object.values(ratings)
+      .filter((r) => !r.enriched_at && r.rating_3class !== "UNAVAILABLE")
+      .map((r) => r.youtube_id);
+  }
+
   function deleteRating(youtubeId) {
     const id = `yt:${youtubeId}`;
     if (ratings[id]) { delete ratings[id]; saveJSON(KEY, ratings); }
@@ -425,7 +447,7 @@ window.Ratings = (() => {
 
   return {
     parseTitle, cleanTitle, getRating, getRatedIds, getAll, getConsistency,
-    counts, kappa, rate, deleteRating, putRecord, reRate, importPayload, clearAll, clearSession, getSession,
+    counts, kappa, rate, deleteRating, putRecord, reRate, importPayload, enrich, unenrichedIds, clearAll, clearSession, getSession,
     maybeQueueConsistencyCheck, setConsistencyTarget, isConsistencyTarget, clearConsistencyTarget,
     getPresets, setPresets,
     getSettings, saveSettings,

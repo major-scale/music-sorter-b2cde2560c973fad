@@ -360,6 +360,13 @@
     syncAll();
     PWA.showToast(`Rated ${label}${record.is_consistency_check ? " (consistency check)" : ""}`, 1200);
 
+    // Enrich with YouTube Data API metadata (async; re-saves + re-syncs when it lands)
+    if (YTMeta.isEnabled() && !record.enriched_at) {
+      YTMeta.lookup(record.youtube_id)
+        .then((meta) => { if (meta && Ratings.enrich(record.youtube_id, meta)) { if (trackInfo && trackInfo.videoId === record.youtube_id) showExistingRating(record.youtube_id); syncAll(); } })
+        .catch((e) => console.warn("[YTMeta] enrich failed", e.message));
+    }
+
     // Maybe queue a consistency check for after the next advance
     const consistencyTarget = Ratings.maybeQueueConsistencyCheck();
     if (consistencyTarget) pendingConsistency = consistencyTarget;
@@ -545,6 +552,7 @@
     $("set-gh-enabled").checked = gh.enabled;
     $("set-gh-repo").value = `${gh.owner}/${gh.repo}`;
     $("set-gh-token").value = gh.token;
+    $("set-yt-key").value = YTMeta.getKey();
     renderGhStatus();
     openModal("settings-modal");
   });
@@ -561,6 +569,7 @@
       repo: repo || "music-sorter-data",
       token: $("set-gh-token").value.trim(),
     });
+    YTMeta.setKey($("set-yt-key").value);
     applySettings();
     closeModal("settings-modal");
     PWA.showToast("Settings saved", 1200);
@@ -573,6 +582,32 @@
     }
   });
   $("close-settings").addEventListener("click", () => closeModal("settings-modal"));
+
+  $("yt-test").addEventListener("click", async () => {
+    YTMeta.setKey($("set-yt-key").value);
+    try { await YTMeta.test(); $("yt-status").textContent = "✓ Key works."; PWA.showToast("✓ YouTube API key works", 2200); }
+    catch (e) { $("yt-status").textContent = "✗ " + e.message; PWA.showToast("✗ " + e.message, 4500); }
+  });
+
+  $("yt-enrich-all").addEventListener("click", async () => {
+    YTMeta.setKey($("set-yt-key").value);
+    if (!YTMeta.isEnabled()) { PWA.showToast("Enter an API key first", 2500); return; }
+    const ids = Ratings.unenrichedIds();
+    if (!ids.length) { $("yt-status").textContent = "Everything already enriched."; return; }
+    $("yt-status").textContent = `Backfilling ${ids.length} tracks…`;
+    try {
+      const map = await YTMeta.lookupBatch(ids);
+      let n = 0;
+      for (const [id, meta] of map) if (Ratings.enrich(id, meta)) n++;
+      Stats.refreshCompact();
+      syncAll();
+      $("yt-status").textContent = `Enriched ${n} of ${ids.length} tracks.`;
+      PWA.showToast(`Enriched ${n} tracks`, 2800);
+    } catch (e) {
+      $("yt-status").textContent = "✗ " + e.message;
+      PWA.showToast("Backfill failed: " + e.message, 4500);
+    }
+  });
 
   $("import-file").addEventListener("change", async (e) => {
     const files = Array.from(e.target.files || []);

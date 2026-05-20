@@ -256,6 +256,16 @@
     </div>
     <p class="modal-note" id="gh-status">Token is stored only on this device. Use a fine-grained PAT scoped to just the backup repo (Contents: read &amp; write).</p>
 
+    <h3 class="modal-section-title">Track metadata (YouTube Data API)</h3>
+    <label class="setting-row"><span>API key</span>
+      <input type="password" id="set-yt-key" placeholder="AIza…" style="width:auto;flex:1;text-align:left">
+    </label>
+    <div class="export-row">
+      <button type="button" id="yt-test" class="ghost-btn">Test key</button>
+      <button type="button" id="yt-enrich-all" class="ghost-btn">Backfill all</button>
+    </div>
+    <p class="modal-note" id="yt-status">Fetches channel, release date, label &amp; canonical artist/title per track. Key stored only on this device; restrict it to this site + YouTube Data API.</p>
+
     <h3 class="modal-section-title">Import / restore</h3>
     <p class="modal-note">Ratings are stored per-site (localhost:8000, localhost:8765, and the github.io URL are separate). Import an export here to load history into <em>this</em> instance — merges by track, newest wins.</p>
     <input type="file" id="import-file" accept="application/json,.json" multiple>
@@ -277,6 +287,7 @@
 <script src="js/pwa.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/github-sync.js"></script>
+<script src="js/youtube-meta.js"></script>
 <script src="js/app.js"></script>
 
 </body>
