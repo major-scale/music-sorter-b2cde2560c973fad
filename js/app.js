@@ -270,7 +270,7 @@
       subgenreTags: [],
     });
     Stats.refreshCompact();
-    Sync.flush();
+    syncAll();
     PWA.showToast(`Rated ${label}${record.is_consistency_check ? " (consistency check)" : ""}`, 1200);
 
     // Maybe queue a consistency check for after the next advance
@@ -315,7 +315,7 @@
     else Ratings.deleteRating(youtubeId);
     undoState = null;
     Stats.refreshCompact();
-    Sync.flush();
+    syncAll();
     PWA.showToast(prevRecord ? `Reverted to ${prevRecord.rating_3class}` : "Rating removed", 1600);
     // navigate back to that track so the user can re-decide
     suppressAutoSkipOnce = true;
@@ -337,6 +337,7 @@
       notes: notesInput.value || "",
     });
     Stats.refreshCompact();
+    syncAll();
     Player.next();
   });
 
@@ -432,6 +433,11 @@
 
   // ----------------- settings + nudge -----------------
 
+  function syncAll() {
+    try { Sync.flush(); } catch (_) {}
+    try { GithubSync.flush(); } catch (_) {}
+  }
+
   function applySettings() {
     settings = Ratings.getSettings();
     Player.setStartOffset(settings.startOffsetSeconds);
@@ -446,6 +452,11 @@
     $("set-nudge").value = settings.nudgeSeconds;
     $("set-start").value = settings.startOffsetSeconds;
     $("set-doubletap").value = settings.doubleTapMs;
+    const gh = GithubSync.getConfig();
+    $("set-gh-enabled").checked = gh.enabled;
+    $("set-gh-repo").value = `${gh.owner}/${gh.repo}`;
+    $("set-gh-token").value = gh.token;
+    renderGhStatus();
     openModal("settings-modal");
   });
   $("save-settings").addEventListener("click", () => {
@@ -454,11 +465,57 @@
       startOffsetSeconds: Math.max(0, Number($("set-start").value) || 0),
       doubleTapMs: Math.min(1500, Math.max(200, Number($("set-doubletap").value) || 500)),
     });
+    const [owner, repo] = ($("set-gh-repo").value || "").split("/").map((s) => s.trim());
+    GithubSync.setConfig({
+      enabled: $("set-gh-enabled").checked,
+      owner: owner || "major-scale",
+      repo: repo || "music-sorter-data",
+      token: $("set-gh-token").value.trim(),
+    });
     applySettings();
     closeModal("settings-modal");
     PWA.showToast("Settings saved", 1200);
   });
   $("close-settings").addEventListener("click", () => closeModal("settings-modal"));
+
+  function renderGhStatus() {
+    const c = GithubSync.getConfig();
+    const el = $("gh-status");
+    const bits = [];
+    bits.push(`device id: ${GithubSync.getDeviceId()}`);
+    if (c.lastSync) bits.push(`last backup: ${new Date(c.lastSync).toLocaleString()}`);
+    if (c.lastError) bits.push(`last error: ${c.lastError}`);
+    bits.push("token stored only on this device");
+    el.textContent = bits.join(" · ");
+  }
+
+  $("gh-test").addEventListener("click", async () => {
+    // persist current field values first so test uses them
+    const [owner, repo] = ($("set-gh-repo").value || "").split("/").map((s) => s.trim());
+    GithubSync.setConfig({ owner: owner || "major-scale", repo: repo || "music-sorter-data", token: $("set-gh-token").value.trim() });
+    try {
+      await GithubSync.test();
+      PWA.showToast("✓ Connected — repo is reachable", 2200);
+    } catch (e) {
+      PWA.showToast("✗ " + e.message, 4000);
+    }
+    renderGhStatus();
+  });
+  $("gh-pushnow").addEventListener("click", async () => {
+    const [owner, repo] = ($("set-gh-repo").value || "").split("/").map((s) => s.trim());
+    GithubSync.setConfig({
+      enabled: $("set-gh-enabled").checked,
+      owner: owner || "major-scale", repo: repo || "music-sorter-data",
+      token: $("set-gh-token").value.trim(),
+    });
+    try {
+      await GithubSync.pushNow();
+      PWA.showToast("✓ Backed up to GitHub", 2200);
+    } catch (e) {
+      PWA.showToast("✗ Backup failed: " + e.message, 4000);
+    }
+    renderGhStatus();
+  });
 
   // ----------------- batches / history -----------------
 
@@ -539,7 +596,7 @@
     if (!label || !yt) return;
     Ratings.reRate(yt, label);
     Stats.refreshCompact();
-    Sync.flush();
+    syncAll();
     renderRecent();
     if (trackInfo && trackInfo.videoId === yt) showExistingRating(yt);
     PWA.showToast(`Re-rated ${label}`, 1200);

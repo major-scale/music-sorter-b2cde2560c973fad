@@ -239,6 +239,21 @@
       <span>Double-tap window (ms)</span>
       <input type="number" id="set-doubletap" min="200" max="1500" step="50" inputmode="numeric">
     </label>
+
+    <h3 class="modal-section-title">Cloud backup (GitHub)</h3>
+    <label class="checkbox-row"><input type="checkbox" id="set-gh-enabled"> Back up every rating to GitHub</label>
+    <label class="setting-row"><span>Repo (owner/name)</span>
+      <input type="text" id="set-gh-repo" placeholder="major-scale/music-sorter-data" style="width:auto;flex:1;text-align:left">
+    </label>
+    <label class="setting-row"><span>Fine-grained token</span>
+      <input type="password" id="set-gh-token" placeholder="github_pat_…" style="width:auto;flex:1;text-align:left">
+    </label>
+    <div class="export-row">
+      <button type="button" id="gh-test" class="ghost-btn">Test connection</button>
+      <button type="button" id="gh-pushnow" class="ghost-btn">Back up now</button>
+    </div>
+    <p class="modal-note" id="gh-status">Token is stored only on this device. Use a fine-grained PAT scoped to just the backup repo (Contents: read &amp; write).</p>
+
     <div class="modal-footer">
       <button type="button" id="save-settings" class="primary-btn">Save</button>
       <button type="button" id="close-settings" class="ghost-btn">Close</button>
@@ -254,6 +269,7 @@
 <script src="js/export.js"></script>
 <script src="js/pwa.js"></script>
 <script src="js/sync.js"></script>
+<script src="js/github-sync.js"></script>
 <script src="js/app.js"></script>
 
 </body>

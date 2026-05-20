@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v6-2026-05-19-nav-undo-mediasession";
+const VERSION = "v7-2026-05-19-github-backup";
 const SHELL = [
   "./",
   "./index.html",
@@ -13,6 +13,7 @@ const SHELL = [
   "./js/export.js",
   "./js/pwa.js",
   "./js/sync.js",
+  "./js/github-sync.js",
   "./icons/icon.svg",
   "./icons/icon-maskable.svg",
 ];
