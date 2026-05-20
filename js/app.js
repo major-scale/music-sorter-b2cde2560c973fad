@@ -48,7 +48,11 @@
   // cross-device, cross-origin history (only if a token is configured here).
   if (GithubSync.isEnabled()) {
     GithubSync.pullMerge()
-      .then((n) => { if (n) { Stats.refreshCompact(); updateRatedCountNote(); PWA.showToast(`Synced ${n} ratings from cloud`, 2500); } })
+      .then((n) => {
+        Stats.refreshCompact(); updateRatedCountNote(); updateQueueProgress();
+        if (n) PWA.showToast(`Synced ${n} ratings from cloud`, 2500);
+        recheckCurrentForSkip();
+      })
       .catch((err) => console.warn("cloud pull failed", err));
   }
 
@@ -155,7 +159,7 @@
     // Already-rated handling (cross-batch): skip if user opted in, not a consistency
     // check, and not currently navigating backward to review/re-rate. Jumps over a
     // whole run of already-rated tracks in one hop rather than stepping through them.
-    if (active && active.skipRated && !skipSuppressed) {
+    if (active && active.skipRated !== false && !skipSuppressed) {
       const rated = Ratings.getRating(info.videoId);
       const isConsistencyTarget = pendingConsistency && pendingConsistency.youtube_id === info.videoId;
       if (rated && !isConsistencyTarget) {
@@ -224,6 +228,22 @@
     return -1;
   }
 
+  // Re-evaluate the currently-playing track after ratings load asynchronously
+  // (e.g., a cloud pull finishing after playback started). Jumps over a run of
+  // already-rated tracks if the current one is rated.
+  function recheckCurrentForSkip() {
+    if (!trackInfo) return;
+    if (!active || active.skipRated === false) return;
+    if (!Ratings.getRating(trackInfo.videoId)) return;
+    const idx = Player.getPlaylistIndex();
+    const nxt = nextUnratedIndex(idx);
+    if (nxt >= 0) {
+      const jumped = nxt - idx;
+      PWA.showToast(jumped > 1 ? `Skipping ${jumped} already-rated` : "Already rated — skipping", 1400);
+      Player.playAt(nxt);
+    }
+  }
+
   function maybeResume() {
     if (resumeChecked) return;
     const list = Player.getPlaylist();
@@ -235,7 +255,7 @@
     if (ratedCount > 0) {
       PWA.showToast(`${list.length} tracks · ${ratedCount} already rated across all batches`, 2800);
     }
-    if (!active || !active.skipRated) return;
+    if (!active || active.skipRated === false) return;
     const firstUnrated = list.findIndex((id) => !rated.has(id));
     const idx = Player.getPlaylistIndex();
     if (firstUnrated === -1) {
@@ -333,7 +353,9 @@
     Player.previous();
   }
   $("btn-prev").addEventListener("click", goPrev);
-  $("btn-next").addEventListener("click", () => { suppressAutoSkipOnce = true; Player.next(); });
+  // Next advances forward and auto-skips already-rated (does NOT suppress); Prev
+  // suppresses so you can step back onto rated tracks to review / re-rate.
+  $("btn-next").addEventListener("click", () => Player.next());
   $("btn-skip").addEventListener("click", () => {
     PWA.showToast("Moved to end of queue", 1400);
     Player.moveCurrentToEnd();
@@ -511,7 +533,7 @@
     // (incl. the seed) so the user doesn't have to reload.
     if (GithubSync.isEnabled()) {
       GithubSync.pullMerge()
-        .then((n) => { Stats.refreshCompact(); updateRatedCountNote(); PWA.showToast(`Synced ${n} ratings from cloud`, 2800); })
+        .then((n) => { Stats.refreshCompact(); updateRatedCountNote(); updateQueueProgress(); PWA.showToast(`Synced ${n} ratings from cloud`, 2800); recheckCurrentForSkip(); })
         .catch((err) => PWA.showToast("Cloud pull failed: " + err.message, 3500));
     }
   });
@@ -702,7 +724,7 @@
       case " ": e.preventDefault(); Player.togglePlay(); break;
       case "ArrowLeft":  e.preventDefault(); Player.seekBy(-settings.nudgeSeconds); break;
       case "ArrowRight": e.preventDefault(); Player.seekBy(settings.nudgeSeconds); break;
-      case "n": case "N": suppressAutoSkipOnce = true; Player.next(); break;
+      case "n": case "N": Player.next(); break;
       case "p": case "P": goPrev(); break;
       case "u": case "U": undoLastRating(); break;
     }
