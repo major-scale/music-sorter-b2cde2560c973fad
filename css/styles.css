@@ -228,6 +228,53 @@ button, input { font-family: inherit; color: inherit; }
   100% { transform: scale(1.0); }
 }
 
+/* ----- transport (nudge) ----- */
+
+.transport {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+.transport .ghost-btn { font-family: var(--mono); min-width: 80px; }
+
+/* ----- settings + batches ----- */
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+.setting-row input {
+  width: 96px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 15px;
+  min-height: var(--tap-min);
+  text-align: right;
+}
+
+.batches-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.batch-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.batch-row.active { border-color: var(--accent); }
+.batch-name { font-weight: 600; font-size: 14px; }
+.batch-meta { font-family: var(--mono); font-size: 11px; color: var(--text-dim); grid-column: 1 / -1; }
+.batch-meta .love { color: var(--love); }
+.batch-meta .slop { color: var(--slop); }
+.batch-actions { display: flex; gap: 6px; }
+
 /* ----- quick actions ----- */
 
 .quick-actions {

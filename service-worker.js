@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v4-2026-05-19-livesync-titlecleanup";
+const VERSION = "v5-2026-05-19-nudge-batches-hotkeys";
 const SHELL = [
   "./",
   "./index.html",

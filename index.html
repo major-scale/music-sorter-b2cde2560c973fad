@@ -39,6 +39,12 @@
     </div>
   </div>
 
+  <!-- Transport: nudge playhead -->
+  <section id="transport" class="transport">
+    <button id="nudge-back" class="ghost-btn small" aria-label="Nudge back">◀ <span class="nudge-n">3</span>s</button>
+    <button id="nudge-fwd"  class="ghost-btn small" aria-label="Nudge forward"><span class="nudge-n">3</span>s ▶</button>
+  </section>
+
   <section id="track-meta" class="track-meta">
     <div class="meta-row">
       <input id="meta-artist" class="meta-input" placeholder="Artist" aria-label="Artist">
@@ -153,6 +159,8 @@
         <div class="menu-item-sub">Pick once; every rating writes the full JSON to that file. Recommended path: <code>~/myMusic/personalPreference/data/sorter_live.json</code> (so Claude can read it).</div>
       </li>
       <li><button type="button" id="menu-queue" class="menu-item">Change queue</button></li>
+      <li><button type="button" id="menu-batches" class="menu-item">Batches / history</button></li>
+      <li><button type="button" id="menu-settings" class="menu-item">Settings</button></li>
       <li><button type="button" id="menu-install" class="menu-item">Install as app</button></li>
       <li><button type="button" id="menu-keyhint" class="menu-item">Keyboard / gestures</button></li>
       <li><button type="button" id="menu-recent" class="menu-item">Recent ratings</button></li>
@@ -170,9 +178,11 @@
   <form method="dialog" class="modal-body">
     <h2 class="modal-title">Shortcuts</h2>
     <dl class="hint-list">
-      <dt>1 / 2 / 3</dt><dd>SLOP / MID / LOVE</dd>
+      <dt>1 / 2 / 3</dt><dd>SLOP / MID / LOVE (single press)</dd>
+      <dt>S / M / L</dt><dd>SLOP / MID / LOVE (press twice quickly to confirm)</dd>
       <dt>Space</dt>    <dd>Play / pause</dd>
-      <dt>→ / N</dt>    <dd>Skip (next track)</dd>
+      <dt>← / →</dt>    <dd>Nudge playhead back / forward</dd>
+      <dt>N</dt>        <dd>Skip (next track)</dd>
       <dt>Swipe ← / →</dt><dd>SLOP / LOVE (mobile)</dd>
       <dt>Swipe ↑</dt>  <dd>MID (mobile)</dd>
     </dl>
@@ -189,6 +199,41 @@
     <ol id="recent-list" class="recent-list"></ol>
     <div class="modal-footer">
       <button type="button" id="close-recent" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Batches / history modal -->
+<dialog id="batches-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Batches / history</h2>
+    <p class="modal-note">Each playlist you load becomes a batch. Ratings are tagged with their batch so your history stays organized.</p>
+    <ul id="batches-list" class="batches-list"></ul>
+    <div class="modal-footer">
+      <button type="button" id="close-batches" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Settings modal -->
+<dialog id="settings-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Settings</h2>
+    <label class="setting-row">
+      <span>Nudge amount (seconds)</span>
+      <input type="number" id="set-nudge" min="1" max="60" step="1" inputmode="numeric">
+    </label>
+    <label class="setting-row">
+      <span>Start playhead at (seconds)</span>
+      <input type="number" id="set-start" min="0" max="180" step="1" inputmode="numeric">
+    </label>
+    <label class="setting-row">
+      <span>Double-tap window (ms)</span>
+      <input type="number" id="set-doubletap" min="200" max="1500" step="50" inputmode="numeric">
+    </label>
+    <div class="modal-footer">
+      <button type="button" id="save-settings" class="primary-btn">Save</button>
+      <button type="button" id="close-settings" class="ghost-btn">Close</button>
     </div>
   </form>
 </dialog>

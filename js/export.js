@@ -25,21 +25,35 @@ window.Exporter = (() => {
       tracks: ratings,
       consistency_checks: consistency,
       sessions: [session],
+      batches: Ratings.getBatches(),
     };
   }
 
-  function download() {
-    const payload = buildPayload();
+  function _save(payload, filename) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const stamp = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = `sorter-export-${stamp}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function download() {
+    _save(buildPayload(), `sorter-export-${new Date().toISOString().slice(0, 10)}.json`);
+  }
+
+  function downloadBatch(batchId) {
+    const all = buildPayload();
+    const tracks = all.tracks.filter((t) => t.batch_id === batchId);
+    const batch = (all.batches || []).find((b) => b.batch_id === batchId);
+    const name = (batch?.name || batchId).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    _save(
+      { ...all, tracks, batches: batch ? [batch] : [], metadata: { ...all.metadata, total_tracks: tracks.length, batch_id: batchId } },
+      `sorter-batch-${name}-${new Date().toISOString().slice(0, 10)}.json`
+    );
   }
 
   async function clipboard() {
@@ -70,5 +84,5 @@ window.Exporter = (() => {
     return false;
   }
 
-  return { download, clipboard, share, buildPayload };
+  return { download, downloadBatch, clipboard, share, buildPayload };
 })();

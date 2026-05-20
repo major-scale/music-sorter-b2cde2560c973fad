@@ -18,6 +18,11 @@
   let trackInfo = null;
   let advancePending = false;
   let pendingConsistency = null;
+  let settings = Ratings.getSettings();
+
+  // double-tap rating state
+  let pendingKey = null;
+  let pendingKeyTimer = null;
 
   // ----------------- bootstrap -----------------
 
@@ -26,6 +31,7 @@
   Stats.refreshCompact();
   renderPresets();
   updateRatedCountNote();
+  applySettings();
 
   // Resume live-sync silently if a handle was previously stored
   Sync.tryRestore().then((on) => {
@@ -104,6 +110,10 @@
     const id = Queue.parsePlaylistId(url);
     if (!id) { alert("Couldn't extract a playlist ID from that URL."); return; }
     active = Queue.setActive({ playlistId: id, title, skipRated: $("opt-skip-rated").checked });
+    const batchName = (title && title !== "Custom playlist")
+      ? title
+      : (prompt("Name this batch (for your history):", title || "New batch") || title || "New batch");
+    Ratings.ensureBatchForPlaylist(id, batchName);
     Player.load(id);
     closeModal("queue-modal");
     showOverlayIfMobile();
@@ -312,6 +322,87 @@
   }
   $("open-menu").addEventListener("click", refreshSyncMenuLabel);
 
+  // ----------------- settings + nudge -----------------
+
+  function applySettings() {
+    settings = Ratings.getSettings();
+    Player.setStartOffset(settings.startOffsetSeconds);
+    document.querySelectorAll(".nudge-n").forEach((el) => { el.textContent = settings.nudgeSeconds; });
+  }
+
+  $("nudge-back").addEventListener("click", () => Player.seekBy(-settings.nudgeSeconds));
+  $("nudge-fwd").addEventListener("click", () => Player.seekBy(settings.nudgeSeconds));
+
+  $("menu-settings").addEventListener("click", () => {
+    closeModal("menu-modal");
+    $("set-nudge").value = settings.nudgeSeconds;
+    $("set-start").value = settings.startOffsetSeconds;
+    $("set-doubletap").value = settings.doubleTapMs;
+    openModal("settings-modal");
+  });
+  $("save-settings").addEventListener("click", () => {
+    Ratings.saveSettings({
+      nudgeSeconds: Math.max(1, Number($("set-nudge").value) || 3),
+      startOffsetSeconds: Math.max(0, Number($("set-start").value) || 0),
+      doubleTapMs: Math.min(1500, Math.max(200, Number($("set-doubletap").value) || 500)),
+    });
+    applySettings();
+    closeModal("settings-modal");
+    PWA.showToast("Settings saved", 1200);
+  });
+  $("close-settings").addEventListener("click", () => closeModal("settings-modal"));
+
+  // ----------------- batches / history -----------------
+
+  $("menu-batches").addEventListener("click", () => {
+    closeModal("menu-modal");
+    renderBatches();
+    openModal("batches-modal");
+  });
+  $("close-batches").addEventListener("click", () => closeModal("batches-modal"));
+
+  function renderBatches() {
+    const list = $("batches-list");
+    list.innerHTML = "";
+    const summaries = Ratings.batchSummaries();
+    const activeId = Ratings.getActiveBatch()?.batch_id;
+    if (!summaries.length) {
+      list.innerHTML = "<li class='modal-note'>No batches yet — load a playlist to start one.</li>";
+      return;
+    }
+    for (const b of summaries) {
+      const li = document.createElement("li");
+      li.className = "batch-row" + (b.batch_id === activeId ? " active" : "");
+      const dateRange = `${(b.first || "").slice(0, 10)}${b.first !== b.last ? "→" + (b.last || "").slice(0, 10) : ""}`;
+      li.innerHTML = `
+        <div class="batch-name"></div>
+        <div class="batch-actions">
+          <button type="button" class="ghost-btn small" data-rename="${b.batch_id}">Rename</button>
+          <button type="button" class="ghost-btn small" data-export="${b.batch_id}">Export</button>
+        </div>
+        <div class="batch-meta">
+          ${b.count} rated · <span class="love">${b.LOVE || 0} love</span> ·
+          ${b.MID || 0} mid · <span class="slop">${b.SLOP || 0} slop</span> · ${dateRange}
+          ${b.batch_id === activeId ? " · <strong>active</strong>" : ""}
+        </div>`;
+      li.querySelector(".batch-name").textContent = b.name;
+      list.appendChild(li);
+    }
+  }
+
+  $("batches-list").addEventListener("click", (e) => {
+    const renameId = e.target.dataset.rename;
+    const exportId = e.target.dataset.export;
+    if (renameId) {
+      const cur = Ratings.batchSummaries().find((x) => x.batch_id === renameId);
+      const name = prompt("Rename batch:", cur ? cur.name : "");
+      if (name) { Ratings.renameBatch(renameId, name); renderBatches(); Sync.flush(); }
+    } else if (exportId) {
+      Exporter.downloadBatch(exportId);
+      PWA.showToast("Exported batch JSON", 1500);
+    }
+  });
+
   function renderRecent() {
     const list = $("recent-list");
     list.innerHTML = "";
@@ -338,18 +429,36 @@
 
   // ----------------- keyboard -----------------
 
+  function handleDoubleTapKey(label, keyName) {
+    if (pendingKey === label) {
+      clearTimeout(pendingKeyTimer);
+      pendingKey = null;
+      recordRating(label);
+    } else {
+      pendingKey = label;
+      PWA.showToast(`Press ${keyName} again to confirm ${label}`, settings.doubleTapMs);
+      clearTimeout(pendingKeyTimer);
+      pendingKeyTimer = setTimeout(() => { pendingKey = null; }, settings.doubleTapMs);
+    }
+  }
+
   window.addEventListener("keydown", (e) => {
     // Ignore when typing in inputs
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector(".modal[open]")) return;
     switch (e.key) {
+      // single-press number keys (fast power-user)
       case "1": recordRating("SLOP"); break;
       case "2": recordRating("MID"); break;
       case "3": recordRating("LOVE"); break;
+      // double-tap letter keys (intentional)
+      case "s": case "S": handleDoubleTapKey("SLOP", "S"); break;
+      case "m": case "M": handleDoubleTapKey("MID", "M"); break;
+      case "l": case "L": handleDoubleTapKey("LOVE", "L"); break;
       case " ": e.preventDefault(); Player.togglePlay(); break;
-      case "ArrowRight":
-      case "n":
-      case "N": Player.next(); break;
+      case "ArrowLeft":  e.preventDefault(); Player.seekBy(-settings.nudgeSeconds); break;
+      case "ArrowRight": e.preventDefault(); Player.seekBy(settings.nudgeSeconds); break;
+      case "n": case "N": Player.next(); break;
     }
   });
 

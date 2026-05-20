@@ -11,7 +11,12 @@ window.Ratings = (() => {
   const SESSION_KEY = "sorter.session.v1";
   const CONSISTENCY_KEY = "sorter.consistency.v1";
   const PRESET_KEY = "sorter.presets.v1";
+  const SETTINGS_KEY = "sorter.settings.v1";
+  const BATCHES_KEY = "sorter.batches.v1";
+  const ACTIVE_BATCH_KEY = "sorter.activeBatch.v1";
   const IDLE_MIN_FOR_NEW_SESSION = 30 * 60 * 1000; // 30 minutes
+
+  const DEFAULT_SETTINGS = { nudgeSeconds: 3, startOffsetSeconds: 20, doubleTapMs: 500 };
 
   const RATING_TO_5PT_DEFAULT = { LOVE: 4, MID: 3, SLOP: 2 };
   const RATINGS_BETWEEN_CONSISTENCY = 50;
@@ -19,6 +24,80 @@ window.Ratings = (() => {
   let ratings = loadJSON(KEY, {});
   let session = ensureSession();
   let consistency = loadJSON(CONSISTENCY_KEY, []); // [{trackId, prevLabel, newLabel, prev5, new5, ts}]
+
+  // ----------------- settings -----------------
+
+  function getSettings() {
+    return { ...DEFAULT_SETTINGS, ...loadJSON(SETTINGS_KEY, {}) };
+  }
+  function saveSettings(patch) {
+    saveJSON(SETTINGS_KEY, { ...getSettings(), ...patch });
+    return getSettings();
+  }
+
+  // ----------------- batches -----------------
+  // A batch = one playlist's worth of rating history. Records carry batch_id/batch_name
+  // so history can be browsed and exported per playlist.
+
+  function getBatches() { return loadJSON(BATCHES_KEY, []); }
+  function getActiveBatch() {
+    const id = loadJSON(ACTIVE_BATCH_KEY, null);
+    return getBatches().find((b) => b.batch_id === id) || null;
+  }
+  function setActiveBatch(id) { saveJSON(ACTIVE_BATCH_KEY, id); }
+
+  function ensureBatchForPlaylist(playlistId, name) {
+    const batches = getBatches();
+    let b = batches.find((x) => x.playlist_id === playlistId);
+    if (!b) {
+      b = {
+        batch_id: `batch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: name || "Untitled batch",
+        playlist_id: playlistId,
+        created_at: new Date().toISOString(),
+      };
+      batches.push(b);
+      saveJSON(BATCHES_KEY, batches);
+    } else if (name && b.name !== name && (b.name === "Untitled batch" || b.name === "Custom playlist")) {
+      b.name = name;
+      saveJSON(BATCHES_KEY, batches);
+    }
+    setActiveBatch(b.batch_id);
+    return b;
+  }
+
+  function renameBatch(id, name) {
+    const batches = getBatches();
+    const b = batches.find((x) => x.batch_id === id);
+    if (b) { b.name = name; saveJSON(BATCHES_KEY, batches); }
+  }
+
+  function batchSummaries() {
+    const out = {};
+    for (const r of Object.values(ratings)) {
+      const bid = r.batch_id || "(unbatched)";
+      if (!out[bid]) {
+        out[bid] = { batch_id: bid, name: r.batch_name || "(unbatched)",
+                     playlist_id: r.source_playlist_id || null,
+                     count: 0, LOVE: 0, MID: 0, SLOP: 0, first: r.rated_at, last: r.rated_at };
+      }
+      const o = out[bid];
+      o.count++;
+      o[r.rating_3class] = (o[r.rating_3class] || 0) + 1;
+      if (r.rated_at < o.first) o.first = r.rated_at;
+      if (r.rated_at > o.last) o.last = r.rated_at;
+    }
+    // include empty batches that exist in the registry but have no ratings yet
+    for (const b of getBatches()) {
+      if (!out[b.batch_id]) {
+        out[b.batch_id] = { batch_id: b.batch_id, name: b.name, playlist_id: b.playlist_id,
+                            count: 0, LOVE: 0, MID: 0, SLOP: 0, first: b.created_at, last: b.created_at };
+      } else {
+        out[b.batch_id].name = b.name; // registry name wins (renames)
+      }
+    }
+    return Object.values(out).sort((a, b) => (a.last < b.last ? 1 : -1));
+  }
 
   // ----------------- persistence -----------------
 
@@ -207,6 +286,7 @@ window.Ratings = (() => {
     const id = `yt:${opts.youtubeId}`;
     const existing = ratings[id];
     const isConsistency = isConsistencyTarget(opts.youtubeId);
+    const activeBatch = getActiveBatch();
 
     const record = {
       track_id: id,
@@ -228,6 +308,8 @@ window.Ratings = (() => {
       listen_duration_seconds: Math.round(opts.listenSeconds || 0),
       notes: opts.notes || "",
       session_id: session.sessionId,
+      batch_id: activeBatch?.batch_id || existing?.batch_id || null,
+      batch_name: activeBatch?.name || existing?.batch_name || null,
       is_consistency_check: isConsistency,
       previous_rating_3class: isConsistency ? existing?.rating_3class || null : (existing?.rating_3class || null),
       device: session.device,
@@ -300,5 +382,7 @@ window.Ratings = (() => {
     counts, kappa, rate, clearAll, clearSession, getSession,
     maybeQueueConsistencyCheck, setConsistencyTarget, isConsistencyTarget, clearConsistencyTarget,
     getPresets, setPresets,
+    getSettings, saveSettings,
+    getBatches, getActiveBatch, setActiveBatch, ensureBatchForPlaylist, renameBatch, batchSummaries,
   };
 })();

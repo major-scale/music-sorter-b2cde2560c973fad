@@ -22,7 +22,8 @@ window.Player = (() => {
   const trackChangeCbs = [];
   const playingStartedCbs = [];
   let firstPlayingFired = false;
-  let lastOverlayCleared = false;
+  let startOffsetSec = 0;       // auto-seek to this position on each new track
+  let seekedThisTrack = false;
 
   function onReady(cb) { if (ready) cb(); else readyQueue.push(cb); }
 
@@ -61,10 +62,20 @@ window.Player = (() => {
       listenAccumulatedMs = 0;
       lastPlayingStartedAt = null;
       firstPlayingFired = false;
+      seekedThisTrack = false;
       trackChangeCbs.forEach((cb) => cb(currentInfo()));
     }
 
     if (e.data === YT.PlayerState.PLAYING) {
+      if (startOffsetSec > 0 && !seekedThisTrack) {
+        seekedThisTrack = true;
+        let dur = 0;
+        try { dur = yt.getDuration() || 0; } catch (_) {}
+        // Only skip the intro if the track is comfortably longer than the offset.
+        if (dur === 0 || dur > startOffsetSec + 5) {
+          try { yt.seekTo(startOffsetSec, true); } catch (_) {}
+        }
+      }
       if (lastPlayingStartedAt == null) lastPlayingStartedAt = performance.now();
       if (!firstPlayingFired) {
         firstPlayingFired = true;
@@ -115,6 +126,18 @@ window.Player = (() => {
       });
     },
     seek(seconds) { onReady(() => yt.seekTo(seconds, true)); },
+    seekBy(delta) {
+      onReady(() => {
+        try {
+          const t = yt.getCurrentTime() || 0;
+          yt.seekTo(Math.max(0, t + delta), true);
+        } catch (_) {}
+      });
+    },
+    currentTime() {
+      try { return yt.getCurrentTime() || 0; } catch (_) { return 0; }
+    },
+    setStartOffset(sec) { startOffsetSec = Math.max(0, Number(sec) || 0); },
     getCurrent: currentInfo,
     listenSeconds() {
       let ms = listenAccumulatedMs;
