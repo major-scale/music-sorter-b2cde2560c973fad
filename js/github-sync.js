@@ -60,10 +60,11 @@ window.GithubSync = (() => {
   }
 
   async function getSha(c) {
-    // Cache-bust + no-cache: GitHub's Contents API can serve a stale sha from CDN
-    // right after a write, which causes persistent 409s on the next push.
+    // Cache-bust with a unique query param (a Cache-Control *header* would force a
+    // CORS preflight that GitHub's API rejects → "Failed to fetch"). The unique URL
+    // is enough to dodge the CDN's stale-sha-after-write window.
     const url = `https://api.github.com/repos/${c.owner}/${c.repo}/contents/${filePath()}?ref=${c.branch}&_cb=${Date.now()}`;
-    const resp = await fetch(url, { headers: { ...headers(c), "Cache-Control": "no-cache" } });
+    const resp = await fetch(url, { headers: headers(c) });
     if (resp.status === 404) { _log("getSha → new file (404)"); return null; }
     if (!resp.ok) {
       const msg = await errMessage(resp);
