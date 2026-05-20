@@ -18,6 +18,7 @@
   let trackInfo = null;
   let advancePending = false;
   let pendingConsistency = null;
+  const metaCache = {};   // youtube_id → fetched metadata (so the line shows before rating)
   let settings = Ratings.getSettings();
 
   // double-tap rating state
@@ -191,6 +192,7 @@
     // Reflect an existing rating so the user can re-rate intentionally.
     showExistingRating(info.videoId);
     showEnrichedMeta(info.videoId);
+    maybeEnrichCurrent(info.videoId);
 
     // Apply consistency target if this is the inserted re-rate
     if (pendingConsistency && pendingConsistency.youtube_id === info.videoId) {
@@ -252,10 +254,24 @@
     return String(n);
   }
 
+  // Fetch metadata for the track being viewed (even before it's rated) so the line
+  // shows while you decide. Cached per session; persisted onto the record if rated.
+  function maybeEnrichCurrent(youtubeId) {
+    if (!YTMeta.isEnabled()) return;
+    const existing = Ratings.getRating(youtubeId);
+    if ((existing && existing.enriched_at) || metaCache[youtubeId]) return;
+    YTMeta.lookup(youtubeId).then((meta) => {
+      if (!meta) return;
+      metaCache[youtubeId] = meta;
+      if (existing) Ratings.enrich(youtubeId, meta);
+      if (trackInfo && trackInfo.videoId === youtubeId) showEnrichedMeta(youtubeId);
+    }).catch((e) => console.warn("[YTMeta] load enrich failed", e.message));
+  }
+
   function showEnrichedMeta(youtubeId) {
     const el = $("enriched-meta");
     if (!el) return;
-    const r = Ratings.getRating(youtubeId);
+    const r = Ratings.getRating(youtubeId) || metaCache[youtubeId];
     if (!r) { el.innerHTML = ""; return; }
     const bits = [];
     if (r.yt_label) bits.push(`<span class="label">🏷 ${r.yt_label}</span>`);
@@ -389,10 +405,12 @@
     syncAll();
     PWA.showToast(`Rated ${label}${record.is_consistency_check ? " (consistency check)" : ""}`, 1200);
 
-    // Enrich with YouTube Data API metadata (async; re-saves + re-syncs when it lands)
-    if (YTMeta.isEnabled() && !record.enriched_at) {
+    // Enrich with YouTube metadata: reuse what was fetched on load, else fetch now.
+    if (metaCache[record.youtube_id]) {
+      Ratings.enrich(record.youtube_id, metaCache[record.youtube_id]);
+    } else if (YTMeta.isEnabled() && !record.enriched_at) {
       YTMeta.lookup(record.youtube_id)
-        .then((meta) => { if (meta && Ratings.enrich(record.youtube_id, meta)) { if (trackInfo && trackInfo.videoId === record.youtube_id) { showExistingRating(record.youtube_id); showEnrichedMeta(record.youtube_id); } syncAll(); } })
+        .then((meta) => { if (meta && Ratings.enrich(record.youtube_id, meta)) { metaCache[record.youtube_id] = meta; syncAll(); } })
         .catch((e) => console.warn("[YTMeta] enrich failed", e.message));
     }
 

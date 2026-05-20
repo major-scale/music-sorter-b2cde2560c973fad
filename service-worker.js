@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v19-2026-05-20-yt-metadata-display";
+const VERSION = "v20-2026-05-20-enrich-on-load";
 const SHELL = [
   "./",
   "./index.html",
