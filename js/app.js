@@ -28,7 +28,10 @@
   let suppressAutoSkipOnce = false;
   let undoState = null;        // { youtubeId, prevRecord|null }
   let resumeChecked = false;   // jump-to-first-unrated only once per load
-  let trackStartedAt = 0;      // perf timestamp when current track loaded (decision timer)
+  // decision timer: accumulates only "active" time, frozen while stopped or tab hidden
+  let decisionAccumMs = 0;
+  let decisionRunningSince = 0;   // perf ts while running; 0 = frozen
+  let globallyStopped = false;
 
   // ----------------- bootstrap -----------------
 
@@ -39,6 +42,12 @@
   updateRatedCountNote();
   applySettings();
   setInterval(updateRateTimer, 500);   // live per-track decision timer
+  updateStopButton();
+  $("btn-stop").addEventListener("click", toggleStop);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) freezeDecisionTimer();
+    else if (!globallyStopped) unfreezeDecisionTimer();
+  });
 
   // Resume live-sync silently if a handle was previously stored
   Sync.tryRestore().then((on) => {
@@ -148,7 +157,7 @@
   function onTrack(info) {
     if (!info) return;
     trackInfo = info;
-    trackStartedAt = performance.now();   // start the decision timer
+    startDecisionTimer();
     resetTrackUI(info);
     Stats.refreshCompact();
     updateRatedCountNote();
@@ -211,12 +220,43 @@
     }
   }
 
+  function startDecisionTimer() {
+    decisionAccumMs = 0;
+    decisionRunningSince = (globallyStopped || document.hidden) ? 0 : performance.now();
+  }
+  function freezeDecisionTimer() {
+    if (decisionRunningSince) { decisionAccumMs += performance.now() - decisionRunningSince; decisionRunningSince = 0; }
+  }
+  function unfreezeDecisionTimer() {
+    if (!decisionRunningSince && !globallyStopped && !document.hidden && trackInfo) decisionRunningSince = performance.now();
+  }
+  function decisionSeconds() {
+    let ms = decisionAccumMs;
+    if (decisionRunningSince) ms += performance.now() - decisionRunningSince;
+    return ms / 1000;
+  }
+
+  function toggleStop() {
+    globallyStopped = !globallyStopped;
+    if (globallyStopped) { freezeDecisionTimer(); Player.pause(); }
+    else { Player.play(); unfreezeDecisionTimer(); }
+    updateStopButton();
+    updateRateTimer();
+  }
+  function updateStopButton() {
+    const b = $("btn-stop");
+    if (!b) return;
+    b.textContent = globallyStopped ? "▶" : "⏸";
+    b.classList.toggle("stopped", globallyStopped);
+    b.title = globallyStopped ? "Resume clock & playback" : "Pause clock & playback";
+  }
+
   function updateRateTimer() {
     const el = $("rate-timer");
     if (!el) return;
-    if (!trackInfo || !trackStartedAt) { el.textContent = ""; return; }
-    const s = (performance.now() - trackStartedAt) / 1000;
-    el.textContent = `⏱ ${s.toFixed(0)}s`;
+    if (globallyStopped) { el.textContent = "⏸ paused"; return; }
+    if (!trackInfo) { el.textContent = ""; return; }
+    el.textContent = `⏱ ${decisionSeconds().toFixed(0)}s`;
   }
 
   function updateQueueProgress() {
@@ -318,8 +358,8 @@
     // capture state for undo (before overwrite)
     undoState = { youtubeId: trackInfo.videoId, prevRecord: Ratings.getRating(trackInfo.videoId) };
 
-    const timeToRate = trackStartedAt ? (performance.now() - trackStartedAt) / 1000 : null;
-    trackStartedAt = 0;   // stop the timer until the next track loads
+    const timeToRate = decisionSeconds();
+    freezeDecisionTimer();   // pause until the next track loads
 
     const record = Ratings.rate({
       youtubeId: trackInfo.videoId,
@@ -736,7 +776,7 @@
       case "s": case "S": handleDoubleTapKey("SLOP", "S"); break;
       case "m": case "M": handleDoubleTapKey("MID", "M"); break;
       case "l": case "L": handleDoubleTapKey("LOVE", "L"); break;
-      case " ": e.preventDefault(); Player.togglePlay(); break;
+      case " ": e.preventDefault(); toggleStop(); break;
       case "ArrowLeft":  e.preventDefault(); Player.seekBy(-settings.nudgeSeconds); break;
       case "ArrowRight": e.preventDefault(); Player.seekBy(settings.nudgeSeconds); break;
       case "n": case "N": Player.next(); break;

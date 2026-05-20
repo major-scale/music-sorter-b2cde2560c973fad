@@ -104,6 +104,8 @@ button, input { font-family: inherit; color: inherit; }
 .ghost-btn:hover { background: var(--surface); }
 .ghost-btn.small { min-height: 40px; padding: 8px 12px; font-size: 13px; }
 .ghost-btn.danger { color: var(--slop); border-color: rgba(226, 33, 52, 0.35); }
+#btn-stop { font-size: 16px; }
+#btn-stop.stopped { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .primary-btn {
   background: var(--accent);
