@@ -177,6 +177,7 @@ button, input { font-family: inherit; color: inherit; }
 .meta-dash { color: var(--text-dim); }
 .video-title-row { font-size: 12px; color: var(--text-dim); }
 .queue-progress { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.rate-timer { font-family: var(--mono); font-size: 12px; color: var(--accent); margin-left: 10px; }
 .current-rating { font-family: var(--mono); font-size: 12px; margin-left: auto; }
 .current-rating.LOVE { color: var(--love); }
 .current-rating.MID  { color: var(--text-dim); }

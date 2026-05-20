@@ -28,6 +28,7 @@
   let suppressAutoSkipOnce = false;
   let undoState = null;        // { youtubeId, prevRecord|null }
   let resumeChecked = false;   // jump-to-first-unrated only once per load
+  let trackStartedAt = 0;      // perf timestamp when current track loaded (decision timer)
 
   // ----------------- bootstrap -----------------
 
@@ -37,6 +38,7 @@
   renderPresets();
   updateRatedCountNote();
   applySettings();
+  setInterval(updateRateTimer, 500);   // live per-track decision timer
 
   // Resume live-sync silently if a handle was previously stored
   Sync.tryRestore().then((on) => {
@@ -146,6 +148,7 @@
   function onTrack(info) {
     if (!info) return;
     trackInfo = info;
+    trackStartedAt = performance.now();   // start the decision timer
     resetTrackUI(info);
     Stats.refreshCompact();
     updateRatedCountNote();
@@ -206,6 +209,14 @@
       el.textContent = "";
       el.className = "current-rating";
     }
+  }
+
+  function updateRateTimer() {
+    const el = $("rate-timer");
+    if (!el) return;
+    if (!trackInfo || !trackStartedAt) { el.textContent = ""; return; }
+    const s = (performance.now() - trackStartedAt) / 1000;
+    el.textContent = `⏱ ${s.toFixed(0)}s`;
   }
 
   function updateQueueProgress() {
@@ -307,6 +318,9 @@
     // capture state for undo (before overwrite)
     undoState = { youtubeId: trackInfo.videoId, prevRecord: Ratings.getRating(trackInfo.videoId) };
 
+    const timeToRate = trackStartedAt ? (performance.now() - trackStartedAt) / 1000 : null;
+    trackStartedAt = 0;   // stop the timer until the next track loads
+
     const record = Ratings.rate({
       youtubeId: trackInfo.videoId,
       videoTitle: trackInfo.videoTitle,
@@ -318,6 +332,7 @@
       rating3class: label,
       rating5point: selected5pt,
       listenSeconds: Player.listenSeconds(),
+      timeToRate,
       notes: notesInput.value || "",
       subgenreTags: [],
     });

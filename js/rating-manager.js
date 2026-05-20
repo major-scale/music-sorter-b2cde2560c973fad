@@ -306,6 +306,7 @@ window.Ratings = (() => {
         ? opts.rating5point
         : (RATING_TO_5PT_DEFAULT[opts.rating3class] ?? null),
       listen_duration_seconds: Math.round(opts.listenSeconds || 0),
+      time_to_rate_seconds: opts.timeToRate != null ? Math.round(opts.timeToRate * 10) / 10 : null,
       notes: opts.notes || "",
       session_id: session.sessionId,
       batch_id: activeBatch?.batch_id || existing?.batch_id || null,

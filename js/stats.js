@@ -22,11 +22,41 @@ window.Stats = (() => {
     return buckets;
   }
 
+  function mean(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; }
+  function median(xs) {
+    if (!xs.length) return null;
+    const s = xs.slice().sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  function ratingSpeed(all) {
+    const byClass = { LOVE: [], MID: [], SLOP: [] };
+    const overall = [];
+    for (const r of all) {
+      if (r.time_to_rate_seconds == null) continue;
+      if (!(r.rating_3class in byClass)) continue;
+      byClass[r.rating_3class].push(r.time_to_rate_seconds);
+      overall.push(r.time_to_rate_seconds);
+    }
+    const fmt = (xs) => xs.length
+      ? `${mean(xs).toFixed(1)}s avg · ${median(xs).toFixed(1)}s median · n=${xs.length}`
+      : "—";
+    return {
+      overall: fmt(overall),
+      LOVE: fmt(byClass.LOVE),
+      MID: fmt(byClass.MID),
+      SLOP: fmt(byClass.SLOP),
+      hasData: overall.length > 0,
+    };
+  }
+
   function renderDetail(container) {
     const c = Ratings.counts();
     const all = Ratings.getAll();
     const k = Ratings.kappa();
     const session = Ratings.getSession();
+    const speed = ratingSpeed(all);
 
     const pct = (n) => c.total ? `${((n / c.total) * 100).toFixed(0)}%` : "—";
     const tagCounts = {};
@@ -54,6 +84,16 @@ window.Stats = (() => {
         <div><strong>${c.session}</strong><br><span class="dim">this session</span></div>
         <div><strong>${k == null ? "—" : k.toFixed(2)}</strong><br><span class="dim">κ consistency</span></div>
       </div>
+
+      <h3 class="modal-section-title">Rating speed (decision time)</h3>
+      <ul class="dim-list">
+        ${speed.hasData ? `
+        <li>overall: <strong>${speed.overall}</strong></li>
+        <li class="love-text">LOVE: ${speed.LOVE}</li>
+        <li class="dim-text">MID: ${speed.MID}</li>
+        <li class="slop-text">SLOP: ${speed.SLOP}</li>
+        ` : "<li class='dim'>(no timed ratings yet — rate a few and check back)</li>"}
+      </ul>
 
       <h3 class="modal-section-title">By sub-genre</h3>
       <ul class="dim-list">${tagRows || "<li class='dim'>(no tags yet)</li>"}</ul>
