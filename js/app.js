@@ -507,6 +507,13 @@
     applySettings();
     closeModal("settings-modal");
     PWA.showToast("Settings saved", 1200);
+    // If cloud backup was just enabled, immediately pull + merge the full history
+    // (incl. the seed) so the user doesn't have to reload.
+    if (GithubSync.isEnabled()) {
+      GithubSync.pullMerge()
+        .then((n) => { Stats.refreshCompact(); updateRatedCountNote(); PWA.showToast(`Synced ${n} ratings from cloud`, 2800); })
+        .catch((err) => PWA.showToast("Cloud pull failed: " + err.message, 3500));
+    }
   });
   $("close-settings").addEventListener("click", () => closeModal("settings-modal"));
 

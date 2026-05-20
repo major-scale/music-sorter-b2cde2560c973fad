@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v9-2026-05-19-import-pullmerge";
+const VERSION = "v10-2026-05-20-pull-on-save";
 const SHELL = [
   "./",
   "./index.html",
