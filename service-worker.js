@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v5-2026-05-19-nudge-batches-hotkeys";
+const VERSION = "v6-2026-05-19-nav-undo-mediasession";
 const SHELL = [
   "./",
   "./index.html",

@@ -335,6 +335,29 @@ window.Ratings = (() => {
     return record;
   }
 
+  function deleteRating(youtubeId) {
+    const id = `yt:${youtubeId}`;
+    if (ratings[id]) { delete ratings[id]; saveJSON(KEY, ratings); }
+  }
+
+  function putRecord(record) {
+    if (record && record.track_id) { ratings[record.track_id] = record; saveJSON(KEY, ratings); }
+  }
+
+  // Re-rate an already-stored track in place (used by the Recent-list edit buttons).
+  function reRate(youtubeId, newLabel) {
+    const id = `yt:${youtubeId}`;
+    const existing = ratings[id];
+    if (!existing) return null;
+    const prev = existing.rating_3class;
+    existing.previous_rating_3class = prev;
+    existing.rating_3class = newLabel;
+    existing.rating_5point = { LOVE: 4, MID: 3, SLOP: 2 }[newLabel] ?? existing.rating_5point;
+    existing.rated_at = new Date().toISOString();
+    saveJSON(KEY, ratings);
+    return existing;
+  }
+
   function clearAll() {
     ratings = {};
     consistency = [];
@@ -379,7 +402,7 @@ window.Ratings = (() => {
 
   return {
     parseTitle, cleanTitle, getRating, getRatedIds, getAll, getConsistency,
-    counts, kappa, rate, clearAll, clearSession, getSession,
+    counts, kappa, rate, deleteRating, putRecord, reRate, clearAll, clearSession, getSession,
     maybeQueueConsistencyCheck, setConsistencyTarget, isConsistencyTarget, clearConsistencyTarget,
     getPresets, setPresets,
     getSettings, saveSettings,

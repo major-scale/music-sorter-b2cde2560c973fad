@@ -113,6 +113,34 @@ window.Player = (() => {
     next() {
       onReady(() => yt.nextVideo());
     },
+    previous() {
+      onReady(() => yt.previousVideo());
+    },
+    playAt(index) {
+      onReady(() => { try { yt.playVideoAt(index); } catch (_) {} });
+    },
+    getPlaylist() {
+      try { return yt.getPlaylist() || []; } catch (_) { return []; }
+    },
+    getPlaylistIndex() {
+      try { return yt.getPlaylistIndex(); } catch (_) { return -1; }
+    },
+    // Move the currently-playing track to the end of the queue and advance.
+    // Used by "Skip" so hard cases come back around later.
+    moveCurrentToEnd() {
+      onReady(() => {
+        try {
+          const list = yt.getPlaylist();
+          const idx = yt.getPlaylistIndex();
+          if (!Array.isArray(list) || list.length < 2 || idx < 0) { yt.nextVideo(); return; }
+          const reordered = list.slice();
+          const [cur] = reordered.splice(idx, 1);
+          reordered.push(cur);
+          // After removal, the track that was "next" now sits at `idx`.
+          yt.loadPlaylist({ playlist: reordered, index: idx % reordered.length });
+        } catch (_) { yt.nextVideo(); }
+      });
+    },
     play() {
       onReady(() => yt.playVideo());
     },

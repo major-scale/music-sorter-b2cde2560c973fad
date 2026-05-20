@@ -55,6 +55,10 @@
       <span class="meta-label">video title:</span>
       <span id="meta-video-title" class="meta-video-title"></span>
     </div>
+    <div class="meta-row">
+      <span id="queue-progress" class="queue-progress"></span>
+      <span id="current-rating" class="current-rating"></span>
+    </div>
   </section>
 
   <!-- Rating row -->
@@ -75,7 +79,10 @@
 
   <!-- Quick actions -->
   <section id="quick-actions" class="quick-actions">
-    <button id="btn-skip"   class="ghost-btn small">Skip</button>
+    <button id="btn-prev"   class="ghost-btn small">◀ Prev</button>
+    <button id="btn-next"   class="ghost-btn small">Next ▶</button>
+    <button id="btn-skip"   class="ghost-btn small">Skip to end</button>
+    <button id="btn-undo"   class="ghost-btn small">↺ Undo</button>
     <button id="btn-unavailable" class="ghost-btn small">Unavailable</button>
   </section>
 
@@ -182,7 +189,8 @@
       <dt>S / M / L</dt><dd>SLOP / MID / LOVE (press twice quickly to confirm)</dd>
       <dt>Space</dt>    <dd>Play / pause</dd>
       <dt>← / →</dt>    <dd>Nudge playhead back / forward</dd>
-      <dt>N</dt>        <dd>Skip (next track)</dd>
+      <dt>N / P</dt>    <dd>Next / Previous track (browse &amp; re-rate)</dd>
+      <dt>U</dt>        <dd>Undo last rating</dd>
       <dt>Swipe ← / →</dt><dd>SLOP / LOVE (mobile)</dd>
       <dt>Swipe ↑</dt>  <dd>MID (mobile)</dd>
     </dl>

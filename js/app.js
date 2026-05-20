@@ -24,6 +24,11 @@
   let pendingKey = null;
   let pendingKeyTimer = null;
 
+  // navigation / undo state
+  let suppressAutoSkipOnce = false;
+  let undoState = null;        // { youtubeId, prevRecord|null }
+  let resumeChecked = false;   // jump-to-first-unrated only once per load
+
   // ----------------- bootstrap -----------------
 
   PWA.register();
@@ -114,6 +119,7 @@
       ? title
       : (prompt("Name this batch (for your history):", title || "New batch") || title || "New batch");
     Ratings.ensureBatchForPlaylist(id, batchName);
+    resumeChecked = false;
     Player.load(id);
     closeModal("queue-modal");
     showOverlayIfMobile();
@@ -131,9 +137,16 @@
     resetTrackUI(info);
     Stats.refreshCompact();
     updateRatedCountNote();
+    updateQueueProgress();
+    setMediaSession(info);
+    maybeResume();
 
-    // Already-rated handling: skip if user opted in and not a consistency check
-    if (active && active.skipRated) {
+    const skipSuppressed = suppressAutoSkipOnce;
+    suppressAutoSkipOnce = false;
+
+    // Already-rated handling: skip if user opted in, not a consistency check,
+    // and not currently navigating backward to review/re-rate.
+    if (active && active.skipRated && !skipSuppressed) {
       const rated = Ratings.getRating(info.videoId);
       const isConsistencyTarget = pendingConsistency && pendingConsistency.youtube_id === info.videoId;
       if (rated && !isConsistencyTarget) {
@@ -143,12 +156,79 @@
       }
     }
 
+    // Reflect an existing rating so the user can re-rate intentionally.
+    showExistingRating(info.videoId);
+
     // Apply consistency target if this is the inserted re-rate
     if (pendingConsistency && pendingConsistency.youtube_id === info.videoId) {
       Ratings.setConsistencyTarget(pendingConsistency);
       PWA.showToast("Consistency check — rate it fresh", 2200);
       pendingConsistency = null;
     }
+  }
+
+  function showExistingRating(youtubeId) {
+    const el = $("current-rating");
+    const existing = Ratings.getRating(youtubeId);
+    if (existing && existing.rating_3class) {
+      el.textContent = `rated: ${existing.rating_3class}${existing.rating_5point ? " (" + existing.rating_5point + ")" : ""}`;
+      el.className = "current-rating " + existing.rating_3class;
+      // prefill notes + 5pt so a re-rate preserves them unless changed
+      if (existing.notes) notesInput.value = existing.notes;
+      if (existing.rating_5point) {
+        selected5pt = existing.rating_5point;
+        const b = document.querySelector(`.fp-btn[data-fp="${existing.rating_5point}"]`);
+        if (b) { document.querySelectorAll(".fp-btn").forEach((x) => x.classList.remove("selected")); b.classList.add("selected"); }
+      }
+      if (existing.artist && !metaArtist.value) metaArtist.value = existing.artist;
+      if (existing.title && !metaTitle.value) metaTitle.value = existing.title;
+    } else {
+      el.textContent = "";
+      el.className = "current-rating";
+    }
+  }
+
+  function updateQueueProgress() {
+    const el = $("queue-progress");
+    const list = Player.getPlaylist();
+    const idx = Player.getPlaylistIndex();
+    if (!list.length || idx < 0) { el.textContent = ""; return; }
+    const rated = Ratings.getRatedIds();
+    const unrated = list.filter((id) => !rated.has(id)).length;
+    el.textContent = `track ${idx + 1} / ${list.length} · ${unrated} unrated`;
+  }
+
+  function maybeResume() {
+    if (resumeChecked) return;
+    resumeChecked = true;
+    if (!active || !active.skipRated) return;
+    const list = Player.getPlaylist();
+    if (!list.length) { resumeChecked = false; return; } // playlist not ready yet; retry next track event
+    const rated = Ratings.getRatedIds();
+    const firstUnrated = list.findIndex((id) => !rated.has(id));
+    const idx = Player.getPlaylistIndex();
+    if (firstUnrated > idx) {
+      PWA.showToast(`Resuming at first unrated (track ${firstUnrated + 1})`, 1800);
+      Player.playAt(firstUnrated);
+    }
+  }
+
+  function setMediaSession(info) {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      const parsed = Ratings.parseTitle(info.videoTitle);
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: parsed.title || info.videoTitle || "",
+        artist: parsed.artist || "",
+        artwork: [
+          { src: `https://i.ytimg.com/vi/${info.videoId}/hqdefault.jpg`, sizes: "480x360", type: "image/jpeg" },
+        ],
+      });
+      navigator.mediaSession.setActionHandler("nexttrack", () => Player.next());
+      navigator.mediaSession.setActionHandler("previoustrack", () => goPrev());
+      navigator.mediaSession.setActionHandler("play", () => Player.play());
+      navigator.mediaSession.setActionHandler("pause", () => Player.pause());
+    } catch (_) {}
   }
 
   function resetTrackUI(info) {
@@ -171,6 +251,9 @@
     const btn = label === "LOVE" ? loveBtn : (label === "MID" ? midBtn : slopBtn);
     btn.classList.add("flash");
     haptic();
+
+    // capture state for undo (before overwrite)
+    undoState = { youtubeId: trackInfo.videoId, prevRecord: Ratings.getRating(trackInfo.videoId) };
 
     const record = Ratings.rate({
       youtubeId: trackInfo.videoId,
@@ -213,7 +296,32 @@
 
   // ----------------- quick actions -----------------
 
-  $("btn-skip").addEventListener("click", () => Player.next());
+  function goPrev() {
+    suppressAutoSkipOnce = true;
+    Player.previous();
+  }
+  $("btn-prev").addEventListener("click", goPrev);
+  $("btn-next").addEventListener("click", () => { suppressAutoSkipOnce = true; Player.next(); });
+  $("btn-skip").addEventListener("click", () => {
+    PWA.showToast("Moved to end of queue", 1400);
+    Player.moveCurrentToEnd();
+  });
+  $("btn-undo").addEventListener("click", undoLastRating);
+
+  function undoLastRating() {
+    if (!undoState) { PWA.showToast("Nothing to undo", 1200); return; }
+    const { youtubeId, prevRecord } = undoState;
+    if (prevRecord) Ratings.putRecord(prevRecord);
+    else Ratings.deleteRating(youtubeId);
+    undoState = null;
+    Stats.refreshCompact();
+    Sync.flush();
+    PWA.showToast(prevRecord ? `Reverted to ${prevRecord.rating_3class}` : "Rating removed", 1600);
+    // navigate back to that track so the user can re-decide
+    suppressAutoSkipOnce = true;
+    Player.previous();
+  }
+
   $("btn-unavailable").addEventListener("click", () => {
     if (!trackInfo) return;
     Ratings.rate({
@@ -411,10 +519,31 @@
     for (const r of recent) {
       const li = document.createElement("li");
       li.className = r.rating_3class;
-      li.textContent = `${r.rating_3class} — ${r.artist || "?"} — ${r.title || r.video_title || "?"}`;
+      const label = document.createElement("span");
+      label.textContent = `${r.rating_3class} — ${r.artist || "?"} — ${r.title || r.video_title || "?"}`;
+      const edit = document.createElement("span");
+      edit.className = "recent-edit";
+      edit.innerHTML =
+        `<button class="s" data-rerate="SLOP" data-yt="${r.youtube_id}">S</button>` +
+        `<button class="m" data-rerate="MID" data-yt="${r.youtube_id}">M</button>` +
+        `<button class="l" data-rerate="LOVE" data-yt="${r.youtube_id}">L</button>`;
+      li.appendChild(label);
+      li.appendChild(edit);
       list.appendChild(li);
     }
   }
+
+  $("recent-list").addEventListener("click", (e) => {
+    const label = e.target.dataset.rerate;
+    const yt = e.target.dataset.yt;
+    if (!label || !yt) return;
+    Ratings.reRate(yt, label);
+    Stats.refreshCompact();
+    Sync.flush();
+    renderRecent();
+    if (trackInfo && trackInfo.videoId === yt) showExistingRating(yt);
+    PWA.showToast(`Re-rated ${label}`, 1200);
+  });
 
   function openModal(id) {
     const dlg = $(id);
@@ -458,7 +587,9 @@
       case " ": e.preventDefault(); Player.togglePlay(); break;
       case "ArrowLeft":  e.preventDefault(); Player.seekBy(-settings.nudgeSeconds); break;
       case "ArrowRight": e.preventDefault(); Player.seekBy(settings.nudgeSeconds); break;
-      case "n": case "N": Player.next(); break;
+      case "n": case "N": suppressAutoSkipOnce = true; Player.next(); break;
+      case "p": case "P": goPrev(); break;
+      case "u": case "U": undoLastRating(); break;
     }
   });
 

@@ -176,6 +176,16 @@ button, input { font-family: inherit; color: inherit; }
 }
 .meta-dash { color: var(--text-dim); }
 .video-title-row { font-size: 12px; color: var(--text-dim); }
+.queue-progress { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.current-rating { font-family: var(--mono); font-size: 12px; margin-left: auto; }
+.current-rating.LOVE { color: var(--love); }
+.current-rating.MID  { color: var(--text-dim); }
+.current-rating.SLOP { color: var(--slop); }
+.recent-edit { display: inline-flex; gap: 4px; margin-left: 8px; }
+.recent-edit button { font-size: 11px; padding: 2px 8px; min-height: 28px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); cursor: pointer; }
+.recent-edit button.s:hover { color: var(--slop); border-color: var(--slop); }
+.recent-edit button.m:hover { color: var(--text); }
+.recent-edit button.l:hover { color: var(--love); border-color: var(--love); }
 .meta-label { text-transform: uppercase; letter-spacing: 0.06em; }
 .meta-video-title { font-family: var(--mono); }
 
