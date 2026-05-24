@@ -706,7 +706,12 @@
       }
     } catch (e) {
       console.warn("Round 2 activation failed", e);
-      PWA.showToast("Round 2 cancelled / unavailable (needs Chrome/Edge)", 2400);
+      let msg;
+      if (!window.showDirectoryPicker) msg = "Round 2 needs desktop Chrome or Edge — this browser lacks folder access.";
+      else if (e && e.name === "AbortError") msg = "Folder pick cancelled — tap 🎚 Round 2 again and choose your data folder.";
+      else if (e && /MANIFEST_NOT_FOUND/.test(e.message || "")) msg = "No round2_pilot.json in that folder — pick the 'data' folder itself (the one containing round2_pilot.json + audio/), not its parent or audio/.";
+      else msg = "Round 2 failed: " + ((e && e.message) || "unknown error");
+      PWA.showToast(msg, 5200);
       Player.use("youtube");
     }
   }

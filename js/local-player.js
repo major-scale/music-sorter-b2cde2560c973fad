@@ -126,7 +126,9 @@ window.LocalBackend = (() => {
     return loadManifestFromFolder();
   }
   async function loadManifestFromFolder(manifestName = "round2_pilot.json") {
-    const file = await fileAt(manifestName);
+    let file;
+    try { file = await fileAt(manifestName); }
+    catch (_) { throw new Error("MANIFEST_NOT_FOUND"); }   // wrong folder picked (no round2_pilot.json inside)
     const json = JSON.parse(await file.text());
     tracks = json.tracks || json;
     idx = -1;
