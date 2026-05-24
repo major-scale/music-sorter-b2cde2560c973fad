@@ -623,3 +623,7 @@ body.round2-mode .seg-mark { font-size: 14px; padding: 8px 14px; }
 .qm-chip.qm-SLOP { background: var(--slop-faded); color: var(--slop); }
 .qm-chip.qm-unrated { opacity: 0.6; }
 .qm-curlegend { outline: 2px solid var(--accent); }
+
+/* nested rating windows (inner = a band inside the parent) */
+.wavesurfer-region.nested-region { top: 22% !important; height: 56% !important; border: 2px solid #fff !important; border-radius: 4px; box-shadow: 0 0 0 1px rgba(0,0,0,.5); z-index: 5 !important; }
+.ml-chip.ml-nested { margin-left: 22px; }

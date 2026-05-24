@@ -25,17 +25,37 @@ window.Waveform = (() => {
     tag.textContent = ICON[label] || label;
   }
 
+  const NESTABLE = (r) => r && r.data && r.data.label && r.data.label !== "neutral";
+  function enclosingOf(r, all) {            // innermost OTHER content region strictly containing r = its nesting parent
+    let best = null;
+    for (const o of all) {
+      if (o === r || !NESTABLE(o)) continue;
+      if (o.start <= r.start + 1e-6 && o.end >= r.end - 1e-6 && (o.end - o.start) > (r.end - r.start) + 1e-6) {
+        if (!best || (o.end - o.start) < (best.end - best.start)) best = o;
+      }
+    }
+    return best;
+  }
+  function restyleAll() {                   // re-apply colors + flag nested (inner) regions so they render "inside" the parent
+    if (!ws || !ws.regions || !ws.regions.list) return;
+    const all = Object.values(ws.regions.list);
+    all.forEach((r) => { if (!r.data || !r.data.label) return; styleRegion(r, r.data.label); if (r.element) r.element.classList.toggle("nested-region", NESTABLE(r) && !!enclosingOf(r, all)); });
+  }
+  function updateMarkers() { renderList(); restyleAll(); }
+
   const fmt = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
   function renderList() {                                 // marker list under the waveform (delete here, not by dblclick)
     const el = document.getElementById("marker-list");
     if (!el) return;
     if (!ws || !ws.regions || !ws.regions.list) { el.innerHTML = ""; return; }
-    const regs = Object.values(ws.regions.list).sort((a, b) => a.start - b.start);
-    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, then drag on the waveform</span>'; return; }
+    const all = Object.values(ws.regions.list);
+    const regs = all.slice().sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, then drag on the waveform (tap a label <em>inside</em> a window for a nested moment)</span>'; return; }
     el.innerHTML = regs.map((r) => {
       const lab = (r.data && r.data.label) || "?";
       const span = (r.end - r.start) > 1 ? (fmt(r.start) + "–" + fmt(r.end)) : fmt(r.start);
-      return '<span class="ml-chip ml-' + lab + '" data-rid="' + r.id + '">' + (ICON[lab] || "") + " " + lab + " " + span +
+      const nested = NESTABLE(r) && !!enclosingOf(r, all);
+      return '<span class="ml-chip ml-' + lab + (nested ? ' ml-nested' : '') + '" data-rid="' + r.id + '">' + (nested ? "↳ " : "") + (ICON[lab] || "") + " " + lab + " " + span +
         '<button class="ml-x" data-rid="' + r.id + '" title="delete marker">✕</button></span>';
     }).join("");
   }
@@ -65,11 +85,11 @@ window.Waveform = (() => {
       ws.on("region-created", (r) => {
         if (!r.data || !r.data.label) r.data = { label: activeLabel };
         styleRegion(r, r.data.label);
-        setTimeout(renderList, 0);                 // region isn't in regions.list yet during this event — defer
+        setTimeout(updateMarkers, 0);              // region isn't in regions.list yet during this event — defer
       });
       ws.on("region-updated", renderList);
-      ws.on("region-update-end", renderList);
-      ws.on("region-removed", renderList);
+      ws.on("region-update-end", updateMarkers);   // nesting may have changed after a drag/resize
+      ws.on("region-removed", updateMarkers);
       ws.on("ready", () => { wsReady = true; setZoom(100); if (pendingRestore) { const pr = pendingRestore; pendingRestore = null; applyRestore(pr); } });
       const ml = document.getElementById("marker-list");          // delete via the list (no waveform interference)
       if (ml) ml.addEventListener("click", (e) => { const b = e.target.closest(".ml-x"); if (b && ws.regions.list[b.dataset.rid]) ws.regions.list[b.dataset.rid].remove(); });
@@ -105,7 +125,7 @@ window.Waveform = (() => {
     (pr.neutrals || []).forEach((t) => { const r = ws.addRegion({ start: t, end: t + 0.12, color: colorFor("neutral"), drag: false, resize: false, data: { label: "neutral" } }); styleRegion(r, "neutral"); });
     (pr.segments || []).forEach((s) => { const r = ws.addRegion({ start: s.start_s, end: s.end_s, color: colorFor(s.label), drag: true, resize: true, data: { label: s.label } }); styleRegion(r, s.label); });
     anchorSec = (pr.neutrals && pr.neutrals.length) ? pr.neutrals[0] : null;
-    renderList();
+    updateMarkers();
   }
 
   // zoom: pct 0 = fit whole track (drag big ranges) … 100 = default 20px/s (detail / max zoom-in)
@@ -139,7 +159,7 @@ window.Waveform = (() => {
       const t = curT();
       const r = ws.addRegion({ start: t, end: t + 0.05,   // zero-width point at the playhead; expand by dragging an edge
         color: colorFor(label), drag: true, resize: true, data: { label } });
-      styleRegion(r, label); renderList();
+      styleRegion(r, label); updateMarkers();
     },
     setAnchor() {
       if (!ws) return;
@@ -170,9 +190,10 @@ window.Waveform = (() => {
       const neutrals = all.filter((r) => r.data && r.data.label === "neutral").map((r) => +(+r.start).toFixed(2)).sort((x, y) => x - y);
       const refFor = (s) => { let ref = null; for (const n of neutrals) { if (n <= s + 1e-6) ref = n; else break; } return ref; };
       return all
-        .filter((r) => r.data && r.data.label && r.data.label !== "neutral")
-        .map((r) => { const start_s = +(+r.start).toFixed(2);
-          return { start_s, end_s: +(+r.end).toFixed(2), label: r.data.label, strength: 2, ref_neutral_s: refFor(start_s), ts: new Date().toISOString() }; })
+        .filter(NESTABLE)
+        .map((r) => { const start_s = +(+r.start).toFixed(2); const par = enclosingOf(r, all);
+          return { id: r.id, start_s, end_s: +(+r.end).toFixed(2), label: r.data.label, strength: 2,
+            ref_neutral_s: refFor(start_s), parent_id: par ? par.id : null, ts: new Date().toISOString() }; })
         .sort((a, b) => a.start_s - b.start_s);
     },
   };
