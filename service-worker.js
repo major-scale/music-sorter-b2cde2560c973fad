@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v27-2026-05-23-marker-move";
+const VERSION = "v28-2026-05-23-marker-drag-nest";
 const SHELL = [
   "./",
   "./index.html",

@@ -23,46 +23,50 @@ window.Waveform = (() => {
     let tag = r.element.querySelector(".seg-tag");
     if (!tag) { tag = document.createElement("span"); tag.className = "seg-tag"; r.element.appendChild(tag); }
     tag.textContent = ICON[label] || label;
-    r.element.style.cursor = "pointer";
-    r.element.onclick = (e) => showRegionMenu(r, e);              // click a marker → local menu (topmost/innermost wins via z-index)
   }
 
-  // ---- per-marker popover: edit/nest without the drag-moves-it problem ----
-  let menuEl = null;
+  // ---- per-marker popover: add a nested marker / delete. Moving = just drag the marker; resizing = drag its edges. ----
+  let menuEl = null, menuTime = 0;
+  function timeAtClientX(clientX) {                         // waveform x-pixel → time (accounts for zoom + scroll)
+    try {
+      const wrap = ws && ws.drawer && ws.drawer.wrapper, total = (ws && ws.getDuration && ws.getDuration()) || 0;
+      if (wrap && total) {
+        const rect = wrap.getBoundingClientRect();
+        const x = (clientX - rect.left) + (wrap.scrollLeft || 0);
+        return Math.max(0, Math.min(total, total * (x / (wrap.scrollWidth || rect.width))));
+      }
+    } catch (_) {}
+    return curT();
+  }
   function closeMenu() { if (menuEl) menuEl.style.display = "none"; }
   function showRegionMenu(r, ev) {
-    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+    if (ev) { ev.preventDefault(); if (ev.stopPropagation) ev.stopPropagation(); }
+    menuTime = ev ? Math.max(r.start, Math.min(timeAtClientX(ev.clientX), r.end)) : (r.start + r.end) / 2;   // where the mouse was
     if (!menuEl) {
       menuEl = document.createElement("div"); menuEl.className = "region-menu"; document.body.appendChild(menuEl);
       document.addEventListener("click", (e) => { if (menuEl && menuEl.style.display === "block" && !menuEl.contains(e.target)) closeMenu(); }, true);
     }
     const lab = (r.data && r.data.label) || "?";
     const span = fmt(r.start) + ((r.end - r.start) > 1 ? "–" + fmt(r.end) : "");
-    menuEl.innerHTML = '<div class="rm-title">' + (ICON[lab] || "") + " " + lab + " " + span + '</div>' +
-      '<button data-act="inner">⊕ add inner marker</button>' +
-      '<button data-act="move">↦ move here (to ▶ playhead)</button>' +
+    menuEl.innerHTML = '<div class="rm-title">' + (ICON[lab] || "") + " " + lab + " " + span + ' · drag to move · edges to resize</div>' +
+      '<button data-act="inner">⊕ add inner marker here</button>' +
       '<button data-act="del">✕ delete</button>';
     menuEl.querySelectorAll("button").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); regionAct(r, b.dataset.act); closeMenu(); }; });
-    const x = Math.max(8, Math.min((ev && ev.clientX) || 40, window.innerWidth - 220));
-    const y = Math.max(8, Math.min((ev && ev.clientY) || 40, window.innerHeight - 200));
+    const x = Math.max(8, Math.min((ev && ev.clientX) || 40, window.innerWidth - 240));
+    const y = Math.max(8, Math.min((ev && ev.clientY) || 40, window.innerHeight - 150));
     menuEl.style.left = x + "px"; menuEl.style.top = y + "px"; menuEl.style.display = "block";
   }
   function regionAct(r, act) {
     if (!r) return;
     if (act === "del") { r.remove(); return; }
-    if (act === "inner") {
-      const t = Math.max(r.start, Math.min(curT(), r.end - 0.5));
-      const nr = ws.addRegion({ start: t, end: Math.min(r.end, t + 2), color: colorFor(activeLabel), drag: false, resize: false, data: { label: activeLabel } });
-      styleRegion(nr, activeLabel); updateMarkers(); return;
+    if (act === "inner") {                                  // small marker centered where the mouse was, clamped inside the parent
+      const span = r.end - r.start, w = Math.max(0.3, Math.min(2, span * 0.5));
+      let s = menuTime - w / 2, e = menuTime + w / 2;
+      if (s < r.start) { s = r.start; e = s + w; }
+      if (e > r.end) { e = r.end; s = e - w; }
+      const nr = ws.addRegion({ start: Math.max(0, s), end: e, color: colorFor(activeLabel), drag: true, resize: true, data: { label: activeLabel } });
+      styleRegion(nr, activeLabel); updateMarkers();
     }
-    if (act === "move") {                                  // shift the WHOLE marker (both ends) to start at the playhead
-      const span = r.end - r.start;
-      const total = (ws && ws.getDuration && ws.getDuration()) || (audioEl() && audioEl().duration) || 0;
-      let ns = Math.max(0, curT());
-      if (total) ns = Math.min(ns, Math.max(0, total - span));
-      try { r.update({ start: ns, end: ns + span }); } catch (_) { r.start = ns; r.end = ns + span; r.updateRender && r.updateRender(); }
-    }
-    updateMarkers();
   }
 
   const NESTABLE = (r) => r && r.data && r.data.label && r.data.label !== "neutral";
@@ -90,7 +94,7 @@ window.Waveform = (() => {
     if (!ws || !ws.regions || !ws.regions.list) { el.innerHTML = ""; return; }
     const all = Object.values(ws.regions.list);
     const regs = all.slice().sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, drag on the waveform to mark a range. Drag <em>inside</em> a marker to nest one; click a marker to edit/delete.</span>'; return; }
+    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, drag on the waveform to mark a range. Drag a marker to move it (edges to resize); click it for ⊕ inner / ✕ delete.</span>'; return; }
     el.innerHTML = regs.map((r) => {
       const lab = (r.data && r.data.label) || "?";
       const span = (r.end - r.start) > 1 ? (fmt(r.start) + "–" + fmt(r.end)) : fmt(r.start);
@@ -106,7 +110,7 @@ window.Waveform = (() => {
     const a = audioEl();
     if (!container || !a) return;
     try {
-      regions = WaveSurfer.regions.create({ dragSelection: { slop: 5, drag: false, resize: false } });   // created regions are NOT movable → click = menu, drag INSIDE one = a nested marker
+      regions = WaveSurfer.regions.create({ dragSelection: { slop: 5 } });   // drag a marker = move it; click a marker = menu (⊕ add inner / ✕ delete)
       const plugins = [regions];
       const mapEl = document.getElementById("waveform-map");
       if (mapEl && WaveSurfer.minimap) {
@@ -130,6 +134,7 @@ window.Waveform = (() => {
       ws.on("region-updated", renderList);
       ws.on("region-update-end", updateMarkers);   // nesting may have changed after a drag/resize
       ws.on("region-removed", updateMarkers);
+      ws.on("region-click", (r, e) => showRegionMenu(r, e));   // click a marker → its menu (topmost/innermost wins via z-index)
       ws.on("ready", () => { wsReady = true; setZoom(100); if (pendingRestore) { const pr = pendingRestore; pendingRestore = null; applyRestore(pr); } });
       const ml = document.getElementById("marker-list");          // delete via the list (no waveform interference)
       if (ml) ml.addEventListener("click", (e) => { const b = e.target.closest(".ml-x"); if (b && ws.regions.list[b.dataset.rid]) ws.regions.list[b.dataset.rid].remove(); });
@@ -163,7 +168,7 @@ window.Waveform = (() => {
     if (!ws) return;
     if (ws.clearRegions) ws.clearRegions();
     (pr.neutrals || []).forEach((t) => { const r = ws.addRegion({ start: t, end: t + 0.12, color: colorFor("neutral"), drag: false, resize: false, data: { label: "neutral" } }); styleRegion(r, "neutral"); });
-    (pr.segments || []).forEach((s) => { const r = ws.addRegion({ start: s.start_s, end: s.end_s, color: colorFor(s.label), drag: false, resize: false, data: { label: s.label } }); styleRegion(r, s.label); });
+    (pr.segments || []).forEach((s) => { const r = ws.addRegion({ start: s.start_s, end: s.end_s, color: colorFor(s.label), drag: true, resize: true, data: { label: s.label } }); styleRegion(r, s.label); });
     anchorSec = (pr.neutrals && pr.neutrals.length) ? pr.neutrals[0] : null;
     updateMarkers();
   }
@@ -197,8 +202,8 @@ window.Waveform = (() => {
       if (!ws) return;
       activeLabel = label;
       const t = curT();
-      const r = ws.addRegion({ start: t, end: t + 0.05,   // point at the playhead; widen / move via its click-menu
-        color: colorFor(label), drag: false, resize: false, data: { label } });
+      const r = ws.addRegion({ start: t, end: t + 0.05,   // point at the playhead; drag to move, edges to widen
+        color: colorFor(label), drag: true, resize: true, data: { label } });
       styleRegion(r, label); updateMarkers();
     },
     setAnchor() {

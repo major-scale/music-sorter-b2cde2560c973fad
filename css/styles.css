@@ -633,3 +633,9 @@ body.round2-mode .seg-mark { font-size: 14px; padding: 8px 14px; }
 .region-menu .rm-title { font-size: 11px; color: var(--text-dim); padding: 2px 8px 6px; }
 .region-menu button { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text); padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .region-menu button:hover { background: var(--surface); }
+
+/* resize handles (easy to grab) + nested marker sits on top (topmost wins) */
+.wavesurfer-handle { width: 8px !important; background: rgba(255,255,255,.45) !important; }
+.wavesurfer-region:hover .wavesurfer-handle { background: #fff !important; }
+.wavesurfer-region.nested-region { z-index: 12 !important; }
+.wavesurfer-region.nested-region .wavesurfer-handle { background: #fff !important; }
