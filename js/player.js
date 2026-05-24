@@ -23,7 +23,7 @@ window.Player = (() => {
   }
   ensureDispatchers(active);
 
-  const FORWARD = ["init", "onReady", "load", "loadVideoIds", "setManifest", "pickFolder", "hasFolder",
+  const FORWARD = ["init", "onReady", "load", "loadVideoIds", "setManifest", "pickFolder", "forgetFolder", "hasFolder",
     "next", "previous", "playAt", "getPlaylist", "getPlaylistIndex", "moveCurrentToEnd",
     "play", "pause", "togglePlay", "seek", "seekBy", "currentTime", "setStartOffset",
     "getCurrent", "currentTrack", "getTracks", "urlFor", "listenSeconds"];

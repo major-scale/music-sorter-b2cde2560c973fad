@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v23-2026-05-23-round2-diag";
+const VERSION = "v24-2026-05-23-folder-revalidate";
 const SHELL = [
   "./",
   "./index.html",

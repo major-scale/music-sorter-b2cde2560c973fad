@@ -36,6 +36,7 @@ window.LocalBackend = (() => {
   }
   async function idbGet(k) { const d = await db(); return new Promise((res) => { const t = d.transaction("kv").objectStore("kv").get(k); t.onsuccess = () => res(t.result); t.onerror = () => res(null); }); }
   async function idbPut(k, v) { const d = await db(); d.transaction("kv", "readwrite").objectStore("kv").put(v, k); }
+  async function idbDel(k) { const d = await db(); d.transaction("kv", "readwrite").objectStore("kv").delete(k); }
 
   function ensureAudio() {
     if (audio) return audio;
@@ -114,11 +115,15 @@ window.LocalBackend = (() => {
       if (h) {
         let p = await h.queryPermission({ mode: "read" });
         if (p !== "granted") p = await h.requestPermission({ mode: "read" });  // re-grant without re-picking the whole tree
-        if (p === "granted") { dirHandle = h; return true; }
+        if (p === "granted") {
+          try { await h.getFileHandle("round2_pilot.json"); dirHandle = h; return true; }   // validate it's the right folder
+          catch (_) { await idbDel("dataDir"); dirHandle = null; tracks = []; return false; } // wrong folder saved → forget it so the picker re-opens
+        }
       }
     } catch (_) {}
     return false;
   }
+  async function forgetFolder() { dirHandle = null; tracks = []; idx = -1; try { await idbDel("dataDir"); } catch (_) {} }
   async function pickFolder() {
     if (!window.showDirectoryPicker) throw new Error("File System Access API unavailable (use Chrome/Edge)");
     dirHandle = await window.showDirectoryPicker({ id: "round2-data", mode: "read" });
@@ -147,6 +152,7 @@ window.LocalBackend = (() => {
       return { ok: true, n: tracks.length };
     },
     pickFolder,
+    forgetFolder,
     hasFolder() { return !!dirHandle; },
     setManifest(arr) { tracks = arr || []; idx = -1; },
     loadVideoIds() { /* n/a for local */ },
