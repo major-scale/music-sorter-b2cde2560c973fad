@@ -29,6 +29,13 @@
 
 <!-- Player area -->
 <main id="player-area" class="player-area">
+  <div id="test-banner" class="test-banner hidden">🧪 TEST MODE — actions are flagged as test, not real data</div>
+
+  <!-- κ-test banner (hidden unless a reliability check is running) -->
+  <div id="kappa-banner" class="kappa-banner hidden">
+    <span id="kappa-banner-text">κ-test</span>
+    <button type="button" id="kappa-end" class="ghost-btn small">Finish now</button>
+  </div>
 
   <div id="player-shell" class="player-shell">
     <div id="player" aria-label="YouTube player"></div>
@@ -44,6 +51,28 @@
   <section id="transport" class="transport">
     <button id="nudge-back" class="ghost-btn small" aria-label="Nudge back">◀ <span class="nudge-n">3</span>s</button>
     <button id="nudge-fwd"  class="ghost-btn small" aria-label="Nudge forward"><span class="nudge-n">3</span>s ▶</button>
+  </section>
+
+  <!-- Round 2: segment timeline (shown only in local-audio mode) -->
+  <section id="segments" class="segments hidden" aria-label="Mark moments">
+    <div id="waveform" class="waveform"></div>
+    <div id="waveform-map" class="waveform-map" title="whole-track map — click or drag to jump"></div>
+    <div id="marker-list" class="marker-list"></div>
+    <p class="seg-hint">pick a type below, then <strong>drag on the waveform</strong> to place a marker (slight drag = point, wider = range) · click the waveform to seek · drag a region's body to move it, its edges to resize · delete markers in the list above · strip = whole-track map</p>
+    <div class="seg-controls">
+      <span class="seg-pick">mark type:</span>
+      <button id="seg-anchor" class="seg-mark seg-neutral" data-seg="neutral">⚓ neutral</button>
+      <button id="seg-love" class="seg-mark seg-love" data-seg="love">♥ love</button>
+      <button id="seg-mid"  class="seg-mark seg-mid"  data-seg="mid">~ mid</button>
+      <button id="seg-slop" class="seg-mark seg-slop" data-seg="slop">✗ slop</button>
+      <button id="seg-clear" class="ghost-btn xtiny">clear</button>
+      <label class="seg-zoom" title="zoom — left fits the whole track (drag big ranges), right is detail">zoom
+        <button type="button" id="seg-zoom-out" class="zoom-btn" aria-label="zoom out (toward whole track)">−</button>
+        <input type="range" id="seg-zoom" min="0" max="100" value="100">
+        <button type="button" id="seg-zoom-in" class="zoom-btn" aria-label="zoom in">+</button>
+        <button type="button" id="seg-zoom-default" class="zoom-btn" title="return to default zoom">⌂</button>
+      </label>
+    </div>
   </section>
 
   <section id="track-meta" class="track-meta">
@@ -87,6 +116,13 @@
     <button id="btn-skip"   class="ghost-btn small">Skip to end</button>
     <button id="btn-undo"   class="ghost-btn small">↺ Undo</button>
     <button id="btn-unavailable" class="ghost-btn small">Unavailable</button>
+    <button id="btn-round2" class="ghost-btn small" title="Load the Round 2 local-audio pilot">🎚 Round 2</button>
+    <button id="btn-testmode" class="ghost-btn small" aria-pressed="false" title="Flag actions as TEST, not real data">🧪 Test: off</button>
+    <button id="btn-battle" class="ghost-btn small" title="Local: pit same-rated songs from the recent batch head-to-head">⚔ Battle</button>
+    <button id="btn-playoff" class="ghost-btn small" title="Global: rank ALL your songs in a tier via adaptive (Swiss) playoff matchups">🏆 Playoff</button>
+    <button id="btn-insights" class="ghost-btn small" title="Rich stats: movers, quality ranking, labeling health, consistency">📈 Insights</button>
+    <button id="btn-queuemap" class="ghost-btn small" title="Queue map: jump anywhere, see what's rated vs unheard at a glance">🗺 Map</button>
+    <button id="btn-submit-analyze" class="ghost-btn small" title="Save your labels to round2_trial.json for Claude to analyze">✅ Submit &amp; Analyze</button>
   </section>
 
   <!-- More-detail (5-pt + notes) -->
@@ -100,6 +136,17 @@
         <button class="fp-btn" data-fp="4">4<span>like</span></button>
         <button class="fp-btn" data-fp="5">5<span>love</span></button>
       </div>
+      <div id="confidence-row" class="confidence-row" role="radiogroup" aria-label="Confidence">
+        <span class="mini-label">confidence:</span>
+        <button class="conf-btn" data-conf="sure">Sure</button>
+        <button class="conf-btn" data-conf="think_so">Think so</button>
+        <button class="conf-btn" data-conf="guess">Guess</button>
+      </div>
+      <div id="familiar-row" class="familiar-row" role="radiogroup" aria-label="Familiarity">
+        <span class="mini-label">heard before?</span>
+        <button class="fam-btn" data-fam="novel">New to me</button>
+        <button class="fam-btn" data-fam="known">Know it</button>
+      </div>
       <input id="notes-input" class="notes-input" placeholder="notes (great build, weak drop, …)" maxlength="200">
     </div>
   </section>
@@ -111,6 +158,12 @@
 <dialog id="queue-modal" class="modal">
   <form method="dialog" class="modal-body">
     <h2 class="modal-title">Pick a queue</h2>
+
+    <section class="modal-section">
+      <h3 class="modal-section-title">Round 2 — rich local-audio pilot (recommended)</h3>
+      <button type="button" id="queue-round2" class="primary-btn">🎚 Load Round 2 pilot (local audio)</button>
+      <p class="modal-note">Auto-loads your ~158 baseline tracks from the data/ folder — no YouTube needed.</p>
+    </section>
 
     <section class="modal-section">
       <h3 class="modal-section-title">Preset playlists</h3>
@@ -135,6 +188,84 @@
 
     <div class="modal-footer">
       <button type="button" id="close-queue" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Pairwise / playoff modal (Round 2) -->
+<dialog id="queuemap-modal" class="modal">
+  <div class="modal-body">
+    <h2 class="modal-title">🗺 Queue map</h2>
+    <p class="modal-note" id="queuemap-sub">—</p>
+    <div class="qm-legend">
+      <span class="qm-chip qm-LOVE">♥ love</span><span class="qm-chip qm-MID">~ mid</span><span class="qm-chip qm-SLOP">✗ slop</span><span class="qm-chip qm-unrated">· unheard</span><span class="qm-chip qm-curlegend">▢ here</span>
+    </div>
+    <div class="qm-grid" id="queuemap-grid"></div>
+    <div class="modal-footer"><button type="button" id="close-queuemap" class="ghost-btn">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="insights-modal" class="modal">
+  <div class="modal-body">
+    <h2 class="modal-title">📈 Insights</h2>
+    <p class="modal-note" id="insights-sub">—</p>
+    <div id="insights-body"></div>
+    <div class="modal-footer"><button type="button" id="close-insights" class="ghost-btn">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="playoff-modal" class="modal">
+  <div class="modal-body">
+    <h2 class="modal-title" id="playoff-title">🏆 Ranking</h2>
+    <div class="playoff-tabs">
+      <button type="button" class="ghost-btn small playoff-tab" data-tier="ALL">All</button>
+      <button type="button" class="ghost-btn small playoff-tab" data-tier="LOVE">♥ Love</button>
+      <button type="button" class="ghost-btn small playoff-tab" data-tier="MID">~ Mid</button>
+      <button type="button" class="ghost-btn small playoff-tab" data-tier="SLOP">✗ Slop</button>
+    </div>
+    <p class="modal-note" id="playoff-sub">—</p>
+    <ol class="playoff-list" id="playoff-list"></ol>
+    <div class="modal-footer">
+      <button type="button" id="playoff-round" class="primary-btn">▶ Play a round</button>
+      <button type="button" id="close-playoff" class="ghost-btn">Close</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="pairwise-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Which hits harder?</h2>
+    <p class="modal-note" id="pair-context">—</p>
+    <div class="pair-wrap">
+      <div class="pair-card">
+        <div class="pair-meta" id="pair-a-meta"></div>
+        <audio id="pair-audio-a" data-side="a" preload="auto"></audio>
+        <div class="pair-player">
+          <button type="button" class="pair-pp" data-side="a" aria-label="play / pause A">▶</button>
+          <input type="range" class="pair-seek" data-side="a" min="0" max="100" value="0" step="0.1" aria-label="seek A">
+          <span class="pair-time" data-side="a">0:00 / 0:00</span>
+        </div>
+      </div>
+      <div class="pair-card">
+        <div class="pair-meta" id="pair-b-meta"></div>
+        <audio id="pair-audio-b" data-side="b" preload="auto"></audio>
+        <div class="pair-player">
+          <button type="button" class="pair-pp" data-side="b" aria-label="play / pause B">▶</button>
+          <input type="range" class="pair-seek" data-side="b" min="0" max="100" value="0" step="0.1" aria-label="seek B">
+          <span class="pair-time" data-side="b">0:00 / 0:00</span>
+        </div>
+      </div>
+    </div>
+    <div class="pair-verdict" role="radiogroup" aria-label="Preference">
+      <button type="button" class="verdict-btn" data-verdict="-2">A ≫</button>
+      <button type="button" class="verdict-btn" data-verdict="-1">A &gt;</button>
+      <button type="button" class="verdict-btn" data-verdict="0">~tie~</button>
+      <button type="button" class="verdict-btn" data-verdict="1">&lt; B</button>
+      <button type="button" class="verdict-btn" data-verdict="2">≪ B</button>
+    </div>
+    <div class="modal-footer">
+      <button type="button" id="pair-skip" class="ghost-btn small">Skip pair</button>
+      <button type="button" id="close-pairwise" class="ghost-btn">Close</button>
     </div>
   </form>
 </dialog>
@@ -174,6 +305,11 @@
       <li><button type="button" id="menu-install" class="menu-item">Install as app</button></li>
       <li><button type="button" id="menu-keyhint" class="menu-item">Keyboard / gestures</button></li>
       <li><button type="button" id="menu-recent" class="menu-item">Recent ratings</button></li>
+      <li><button type="button" id="menu-pairwise" class="menu-item">Compare pairs (Round 2)</button></li>
+      <li>
+        <button type="button" id="menu-kappa" class="menu-item">Reliability check (κ)</button>
+        <div class="menu-item-sub">Blind re-rate ~50 of your tracks (old ratings hidden), then see how consistent you are with yourself. Best run after a few days' gap.</div>
+      </li>
       <li><button type="button" id="menu-clear-session" class="menu-item danger">Clear current session only</button></li>
       <li><button type="button" id="menu-clear-all"     class="menu-item danger">Clear all ratings</button></li>
     </ul>
@@ -222,6 +358,18 @@
     <ul id="batches-list" class="batches-list"></ul>
     <div class="modal-footer">
       <button type="button" id="close-batches" class="ghost-btn">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Reliability check (κ) results modal -->
+<dialog id="kappa-modal" class="modal">
+  <form method="dialog" class="modal-body">
+    <h2 class="modal-title">Reliability check (κ)</h2>
+    <div id="kappa-results"></div>
+    <div class="modal-footer">
+      <button type="button" id="kappa-restart" class="ghost-btn">Run again</button>
+      <button type="button" id="close-kappa" class="ghost-btn">Close</button>
     </div>
   </form>
 </dialog>
@@ -283,13 +431,22 @@
 <script src="js/queue-manager.js"></script>
 <script src="js/rating-manager.js"></script>
 <script src="js/youtube-player.js"></script>
+<script src="js/local-player.js"></script>
+<script src="js/player.js"></script>
+<script src="js/vendor/wavesurfer.min.js"></script>
+<script src="js/vendor/wavesurfer.regions.min.js"></script>
+<script src="js/vendor/wavesurfer.minimap.min.js"></script>
+<script src="js/waveform.js"></script>
+<script src="js/segments.js"></script>
 <script src="js/stats.js"></script>
 <script src="js/export.js"></script>
 <script src="js/pwa.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/github-sync.js"></script>
 <script src="js/youtube-meta.js"></script>
+<script src="js/ranking.js"></script>
 <script src="js/app.js"></script>
+<script src="js/round2-health.js"></script>
 
 </body>
 </html>

@@ -15,6 +15,9 @@
 
   let active = Queue.getActive();
   let selected5pt = null;
+  let selectedConfidence = null;   // "sure" | "think_so" | "guess"
+  let selectedFamiliar = null;     // "novel" | "known"
+  let testMode = false;            // flag actions as test (annotation_pass="test") so the real pass stays clean
   let trackInfo = null;
   let advancePending = false;
   let pendingConsistency = null;
@@ -29,6 +32,9 @@
   let suppressAutoSkipOnce = false;
   let undoState = null;        // { youtubeId, prevRecord|null }
   let resumeChecked = false;   // jump-to-first-unrated only once per load
+  // κ (reliability) mode: blind re-rate of already-rated tracks; never overwrites.
+  let kappaMode = false;
+  let prevActivePlaylistId = null;
   // timer tracks actual seconds played (Player.listenSeconds); globallyStopped mirrors
   // the YouTube player's real paused state (synced both ways via onPlayStateChange).
   let globallyStopped = true;
@@ -37,6 +43,10 @@
 
   PWA.register();
   PWA.captureInstallPrompt();
+  try {                                   // repair any 3-class/5-point mismatches saved before reconciliation
+    const fixed = Ratings.reconcileAll ? Ratings.reconcileAll() : 0;
+    if (fixed) { console.log(`[ratings] reconciled ${fixed} 3-class/5-point mismatch(es)`); setTimeout(() => PWA.showToast(`Fixed ${fixed} rating(s) where the detailed score didn't match SLOP/MID/LOVE`, 4200), 600); }
+  } catch (_) {}
   Stats.refreshCompact();
   renderPresets();
   updateRatedCountNote();
@@ -164,6 +174,16 @@
     updateRatedCountNote();
     updateQueueProgress();
     setMediaSession(info);
+
+    // κ mode: replay the sampled tracks in order, blind. No auto-skip, no resume
+    // jump, no revealing the prior rating. The banner tracks progress.
+    if (kappaMode) {
+      updateKappaBanner();
+      showEnrichedMeta(info.videoId);
+      maybeEnrichCurrent(info.videoId);
+      return;
+    }
+
     maybeResume();
 
     const skipSuppressed = suppressAutoSkipOnce;
@@ -360,20 +380,46 @@
   }
 
   function resetTrackUI(info) {
-    const parsed = Ratings.parseTitle(info.videoTitle);
-    metaArtist.value = parsed.artist;
-    metaTitle.value  = parsed.title;
-    metaVideoTitle.textContent = info.videoTitle || "(unknown)";
+    const local = Player.backendName && Player.backendName() === "local" && Player.currentTrack;
+    if (local) {
+      const t = Player.currentTrack() || {};
+      metaArtist.value = t.artist || "";
+      metaTitle.value  = t.title || "";
+      metaVideoTitle.textContent = `${t.artist || ""} — ${t.title || ""}${t.subgenre ? "  ·  " + t.subgenre : ""}`;
+    } else {
+      const parsed = Ratings.parseTitle(info.videoTitle);
+      metaArtist.value = parsed.artist;
+      metaTitle.value  = parsed.title;
+      metaVideoTitle.textContent = info.videoTitle || "(unknown)";
+    }
     notesInput.value = "";
     selected5pt = null;
-    document.querySelectorAll(".fp-btn").forEach((b) => b.classList.remove("selected"));
+    selectedConfidence = null;
+    selectedFamiliar = null;
+    document.querySelectorAll(".fp-btn, .conf-btn, .fam-btn").forEach((b) => b.classList.remove("selected"));
     const em = $("enriched-meta"); if (em) em.innerHTML = "";
+    if (window.Segments) {
+      Segments.reset(info && info.durationSec);
+      Segments.setActive("neutral");
+      const yid = (Player.backendName && Player.backendName() === "local" && Player.currentTrack && Player.currentTrack()?.youtube_id) || (info && info.videoId);
+      const saved = yid ? Ratings.getRating(yid) : null;
+      if (saved) {                                         // returning to a labeled track → restore the work
+        if ((saved.segments || []).length || (saved.neutral_markers || []).length) Segments.restore(saved.neutral_markers, saved.segments);
+        selectedConfidence = saved.confidence || null;
+        selectedFamiliar = saved.is_familiar || null;
+        if (selectedConfidence) document.querySelector('.conf-btn[data-conf="' + selectedConfidence + '"]')?.classList.add("selected");
+        if (selectedFamiliar) document.querySelector('.fam-btn[data-fam="' + selectedFamiliar + '"]')?.classList.add("selected");
+      }
+    }
+    document.querySelectorAll(".seg-mark").forEach((x) => x.classList.remove("active"));
+    document.querySelector('.seg-mark[data-seg="neutral"]')?.classList.add("active");   // neutral = base case, default each song
   }
 
   // ----------------- rating -----------------
 
   function recordRating(label) {
     if (!trackInfo) { PWA.showToast("No track loaded yet"); return; }
+    if (kappaMode) { recordKappaRerate(label); return; }
     if (advancePending) return;
     advancePending = true;
 
@@ -399,11 +445,19 @@
       listenSeconds: Player.listenSeconds(),
       timeToRate,
       notes: notesInput.value || "",
-      subgenreTags: [],
+      subgenreTags: (Player.backendName && Player.backendName() === "local" && Player.currentTrack && Player.currentTrack()?.subgenre)
+        ? [Player.currentTrack().subgenre] : [],
+      confidence: selectedConfidence,
+      isFamiliar: selectedFamiliar,
+      neutralAnchorSeconds: window.Segments ? Segments.getAnchor() : null,
+      neutralMarkers: window.Segments ? Segments.getNeutrals() : [],
+      segments: window.Segments ? Segments.getSegments() : [],
+      annotationPass: testMode ? "test" : ((Player.backendName && Player.backendName() === "local") ? "rich-v1" : null),
     });
+    selected5pt = record.rating_5point;   // keep in sync with the reconciled stored value
     Stats.refreshCompact();
     syncAll();
-    PWA.showToast(`Rated ${label}${record.is_consistency_check ? " (consistency check)" : ""}`, 1200);
+    PWA.showToast(`Rated ${label} (${record.rating_5point})${record.is_consistency_check ? " · consistency check" : ""}`, 1200);
 
     // Enrich with YouTube metadata: reuse what was fetched on load, else fetch now.
     if (metaCache[record.youtube_id]) {
@@ -427,6 +481,106 @@
 
   function haptic() {
     if (navigator.vibrate) navigator.vibrate(20);
+  }
+
+  // ----------------- reliability check (κ) -----------------
+
+  function startKappa() {
+    const test = Ratings.startKappaTest(50);
+    if (!test || !test.plan.length) { PWA.showToast("No rated tracks yet to re-test", 2800); return; }
+    kappaMode = true;
+    prevActivePlaylistId = active?.playlistId || null;
+    resumeChecked = true;            // never jump-to-unrated in κ mode
+    suppressAutoSkipOnce = false;
+    const ids = test.plan.map((p) => p.youtube_id);
+    Player.onReady(() => Player.loadVideoIds(ids));
+    updateKappaBanner();
+    showOverlayIfMobile();
+    PWA.showToast(`κ-test: ${ids.length} tracks. Rate each one FRESH — your old ratings are hidden.`, 4500);
+  }
+
+  function updateKappaBanner() {
+    const banner = $("kappa-banner");
+    if (!banner) return;
+    if (!kappaMode) { banner.classList.add("hidden"); return; }
+    const test = Ratings.getKappaTest();
+    const done = test ? test.responses.length : 0;
+    const total = test ? test.plan.length : 0;
+    $("kappa-banner-text").textContent = `κ-test · rate fresh (old ratings hidden) · ${done}/${total}`;
+    banner.classList.remove("hidden");
+  }
+
+  function recordKappaRerate(label) {
+    if (advancePending) return;
+    advancePending = true;
+    const btn = label === "LOVE" ? loveBtn : (label === "MID" ? midBtn : slopBtn);
+    btn.classList.add("flash");
+    haptic();
+    Ratings.recordKappaRerate({
+      youtube_id: trackInfo.videoId,
+      rerate_label: label,
+      rerate_5pt: selected5pt,
+      timeToRate: Player.listenSeconds(),
+      listenSeconds: Player.listenSeconds(),
+    });
+    updateKappaBanner();
+    const test = Ratings.getKappaTest();
+    const done = test.responses.length, total = test.plan.length;
+    setTimeout(() => {
+      btn.classList.remove("flash");
+      advancePending = false;
+      if (done >= total) finishKappa();
+      else { PWA.showToast(`Logged ${done}/${total}`, 800); Player.next(); }
+    }, 450);
+  }
+
+  function finishKappa() {
+    kappaMode = false;
+    updateKappaBanner();
+    showKappaResults();
+    if (prevActivePlaylistId) { resumeChecked = false; Player.load(prevActivePlaylistId); }
+  }
+
+  function showKappaResults() {
+    const r = Ratings.computeKappaTest();
+    const el = $("kappa-results");
+    if (!r) {
+      el.innerHTML = "<p class='modal-note'>No re-ratings recorded yet.</p>";
+      openModal("kappa-modal");
+      return;
+    }
+    const pct = (x) => x == null ? "—" : (x * 100).toFixed(0) + "%";
+    const kfmt = (x) => x == null ? "—" : x.toFixed(2);
+    const interp = (k) => k == null ? "" :
+      k >= 0.8 ? "almost perfect" : k >= 0.6 ? "substantial" :
+      k >= 0.4 ? "moderate" : k >= 0.2 ? "fair" : "slight";
+    const ck = r.cohenK;
+    const verdict = ck == null ? "" :
+      ck >= 0.7 ? "Your taste is highly self-consistent — strong evidence the signal is real, and the model has a high ceiling to chase." :
+      ck >= 0.5 ? "Moderately consistent — there's real signal, but label noise caps how high any model can score." :
+      "Low self-consistency — the labels are noisy, which structurally limits any model. Worth re-rating more deliberately.";
+    const labelRows = ["LOVE", "MID", "SLOP"].map((lab) => {
+      const b = r.byLabel[lab];
+      return `<tr><td class="${lab.toLowerCase()}">${lab}</td><td>${b.n}</td><td>${b.n ? pct(b.agree / b.n) : "—"}</td></tr>`;
+    }).join("");
+    const flips = Object.entries(r.confusion)
+      .filter(([k]) => k.split("→")[0] !== k.split("→")[1])
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k} ×${v}`).join(" · ") || "none — no disagreements";
+    el.innerHTML = `
+      <p class="modal-note">Blind re-rate of ${r.n}${r.planned !== r.n ? " of " + r.planned : ""} tracks. Your originals were never shown or changed.</p>
+      <div class="kappa-big">
+        <div><span class="kappa-num">${pct(r.exactAgree)}</span><span class="kappa-lbl">exact agreement</span></div>
+        <div><span class="kappa-num">${kfmt(r.cohenK)}</span><span class="kappa-lbl">Cohen's κ <em>(${interp(r.cohenK)})</em></span></div>
+        <div><span class="kappa-num">${kfmt(r.weightedK)}</span><span class="kappa-lbl">weighted κ (ordinal)</span></div>
+      </div>
+      <table class="kappa-table">
+        <thead><tr><th>label</th><th>n</th><th>agreed</th></tr></thead>
+        <tbody>${labelRows}</tbody>
+      </table>
+      <p class="modal-note">Disagreements: ${flips}</p>
+      <p class="modal-note"><strong>${verdict}</strong></p>`;
+    openModal("kappa-modal");
   }
 
   ratingRow.addEventListener("click", (e) => {
@@ -492,13 +646,405 @@
     $("more-toggle").setAttribute("aria-expanded", String(!open));
     $("more-toggle").textContent = open ? "More detail ▾" : "More detail ▴";
   });
+  function persistDetailEdit() {            // if the track is already rated, save confidence/familiarity/5pt right away
+    if (!trackInfo) return false;
+    const existing = Ratings.getRating(trackInfo.videoId);
+    if (!existing || !existing.rating_3class) return false;   // unrated → held until you click a tier
+    Ratings.setDetail(trackInfo.videoId, { confidence: selectedConfidence, isFamiliar: selectedFamiliar, rating5point: selected5pt });
+    syncAll();
+    return true;
+  }
   document.querySelectorAll(".fp-btn").forEach((b) => {
     b.addEventListener("click", () => {
       document.querySelectorAll(".fp-btn").forEach((x) => x.classList.remove("selected"));
       b.classList.add("selected");
       selected5pt = Number(b.dataset.fp);
+      if (persistDetailEdit()) PWA.showToast("✓ saved", 800);
     });
   });
+  document.querySelectorAll(".conf-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".conf-btn").forEach((x) => x.classList.remove("selected"));
+      b.classList.add("selected");
+      selectedConfidence = b.dataset.conf;
+      if (persistDetailEdit()) PWA.showToast("✓ saved", 800);
+    });
+  });
+  document.querySelectorAll(".fam-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".fam-btn").forEach((x) => x.classList.remove("selected"));
+      b.classList.add("selected");
+      selectedFamiliar = b.dataset.fam;
+      if (persistDetailEdit()) PWA.showToast("✓ saved", 800);
+    });
+  });
+  // Segment markers: the label buttons are SELECTORS (set the active type); markers are
+  // PLACED by dragging on the waveform (slight drag = point, wider = range; plain click = seek).
+  if ($("seg-clear")) $("seg-clear").addEventListener("click", () => window.Segments && Segments.clear());
+  document.querySelectorAll(".seg-mark").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".seg-mark").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      if (window.Segments) Segments.setActive(b.dataset.seg);
+    });
+  });
+  // Round 2 (local-audio pilot) activation: switch backend, pick the data/ folder, load manifest.
+  async function activateRound2() {
+    try {
+      Player.use("local");
+      let res = await Player.load();                   // resume the saved folder silently / quick allow-prompt
+      if (res && res.needsFolder) {                    // first time or handle gone → full picker
+        await Player.pickFolder();
+        res = await Player.load();
+      }
+      if (res && res.ok) {
+        document.body.classList.add("round2-mode");
+        $("segments").classList.remove("hidden");
+        if (window.Segments) { Segments.enable(true); Segments.setActive("neutral"); }
+        document.querySelector('.seg-mark[data-seg="neutral"]')?.classList.add("active");
+        PWA.showToast(`Round 2: ${res.n} tracks (local audio)`, 2400);
+      }
+    } catch (e) {
+      console.warn("Round 2 activation failed", e);
+      PWA.showToast("Round 2 cancelled / unavailable (needs Chrome/Edge)", 2400);
+      Player.use("youtube");
+    }
+  }
+  if ($("btn-round2")) $("btn-round2").addEventListener("click", activateRound2);
+  if ($("queue-round2")) $("queue-round2").addEventListener("click", () => { closeModal("queue-modal"); activateRound2(); });
+
+  // ---------------- pairwise / playoff (Round 2) ----------------
+  let pairState = null, lastPairKey = null, battleQueue = null, battleStartedAt = 0, battleIsLocal = false;
+  const flipPair = (p) => (Math.random() < 0.5 ? p : { ...p, a: p.b, b: p.a });   // randomize A/B side to kill position bias
+  const pairAudios = () => [$("pair-audio-a"), $("pair-audio-b")];
+  function pairStopAudio() { pairAudios().forEach((a) => { if (a) { try { a.pause(); } catch (_) {} } }); }
+  function pairPick() {
+    const tracks = (Player.getTracks ? Player.getTracks() : []).filter((t) => t.has_audio !== false);
+    const bySg = {};
+    for (const t of tracks) { const k = t.subgenre || "?"; (bySg[k] = bySg[k] || []).push(t); }
+    const styles = Object.keys(bySg).filter((k) => bySg[k].length >= 2);
+    if (!styles.length) return null;
+    for (let i = 0; i < 30; i++) {
+      const sg = styles[Math.floor(Math.random() * styles.length)];
+      const pool = bySg[sg];
+      const a = pool[Math.floor(Math.random() * pool.length)];
+      const b = pool[Math.floor(Math.random() * pool.length)];
+      if (a.youtube_id === b.youtube_id) continue;
+      const key = [a.youtube_id, b.youtube_id].sort().join("|");
+      if (key === lastPairKey) continue;
+      lastPairKey = key; return { a, b, context: sg };
+    }
+    return null;
+  }
+  function pairRender() {
+    if (!pairState) return;
+    let ctx;
+    if (pairState.battle) {                                 // derive each side's tier (robust to A/B flip)
+      const order = { LOVE: 0, MID: 1, SLOP: 2 };
+      const at = (Ratings.getRating(pairState.a.youtube_id) || {}).rating_3class;
+      const bt = (Ratings.getRating(pairState.b.youtube_id) || {}).rating_3class;
+      if (at && bt && at !== bt) {
+        const gap = Math.abs((order[at] ?? 0) - (order[bt] ?? 0));
+        ctx = gap >= 2 ? `🎲 long-shot — A is ${at}, B is ${bt}. Usually obvious… any upset?` : `🔀 cross-tier — A is ${at}, B is ${bt}: which is actually better?`;
+      } else ctx = `both rated ${at || pairState.context} — which is better?`;
+    } else ctx = `same style: ${pairState.context}`;
+    $("pair-context").textContent = ctx;
+    $("pair-a-meta").textContent = `A:  ${pairState.a.artist || ""} — ${pairState.a.title || ""}`;
+    $("pair-b-meta").textContent = `B:  ${pairState.b.artist || ""} — ${pairState.b.title || ""}`;
+    loadPairAudio();
+  }
+  async function loadPairAudio() {                        // two independent big-scrub players (A & B separately)
+    const cur = pairState;
+    for (const side of ["a", "b"]) {
+      const el = $("pair-audio-" + side), t = cur && cur[side];
+      const seek = document.querySelector(`.pair-seek[data-side="${side}"]`);
+      const pp = document.querySelector(`.pair-pp[data-side="${side}"]`);
+      if (!el || !t) continue;
+      try { el.pause(); } catch (_) {}
+      if (seek) seek.value = 0; if (pp) pp.textContent = "▶";
+      try {
+        const url = await Player.urlFor(t);
+        if (pairState !== cur) return;                    // a newer pair loaded — abandon
+        el.src = url; el.load();
+      } catch (e) { PWA.showToast("Couldn't load audio — did you pick the folder?", 2000); }
+    }
+  }
+  function setupPairPlayers() {                           // wire the custom play/seek/time controls once
+    const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+    const scrub = {};
+    ["a", "b"].forEach((side) => {
+      const el = $("pair-audio-" + side);
+      const seek = document.querySelector(`.pair-seek[data-side="${side}"]`);
+      const pp = document.querySelector(`.pair-pp[data-side="${side}"]`);
+      const time = document.querySelector(`.pair-time[data-side="${side}"]`);
+      if (!el) return;
+      const upd = () => { if (time) time.textContent = `${fmt(el.currentTime)} / ${fmt(el.duration)}`; };
+      el.addEventListener("loadedmetadata", () => { if (seek) seek.max = el.duration || 0; try { if (el.duration > 35) el.currentTime = 30; } catch (_) {} if (seek) seek.value = el.currentTime; upd(); });
+      el.addEventListener("timeupdate", () => { if (!scrub[side] && seek) seek.value = el.currentTime; upd(); });
+      el.addEventListener("play", () => { if (pp) pp.textContent = "⏸"; const o = $("pair-audio-" + (side === "a" ? "b" : "a")); if (o && !o.paused) o.pause(); });
+      el.addEventListener("pause", () => { if (pp) pp.textContent = "▶"; });
+      el.addEventListener("ended", () => { if (pp) pp.textContent = "▶"; });
+      if (pp) pp.addEventListener("click", () => { if (el.paused) el.play().catch(() => {}); else el.pause(); });
+      if (seek) {
+        seek.addEventListener("input", () => { scrub[side] = true; el.currentTime = Number(seek.value); upd(); });
+        seek.addEventListener("change", () => { scrub[side] = false; });
+      }
+    });
+  }
+  setupPairPlayers();
+  function pairNext() {
+    pairStopAudio();
+    if (battleQueue) {                                    // batch-battle / playoff mode: same-rated matchups
+      if (!battleQueue.length) {
+        const playoff = !!(pairState && pairState.playoff);
+        const finishedLocal = battleIsLocal && !playoff;   // only a FULLY-finished local battle consumes the batch
+        battleQueue = null; pairState = null; battleIsLocal = false; closeModal("pairwise-modal"); snapshotRanking();
+        if (playoff) { PWA.showToast("Round done — ranking updated", 2000); openPlayoff(playoffTier); }
+        else { if (finishedLocal) localStorage.setItem("sorter.lastBattleDoneTs", String(battleStartedAt || Date.now())); PWA.showToast("Battle complete — batch ranked", 2600); }
+        return;
+      }
+      pairState = battleQueue.shift(); pairRender(); return;
+    }
+    pairState = pairPick();
+    if (pairState) pairRender(); else closeModal("pairwise-modal");
+  }
+  function startBattle() {                                // pit same-rated songs from the recent batch head-to-head
+    if (!(Player.backendName && Player.backendName() === "local" && Player.hasFolder && Player.hasFolder())) { PWA.showToast("Tap 🎚 Round 2 first", 2600); return; }
+    const byId = {}; (Player.getTracks ? Player.getTracks() : []).forEach((t) => { byId[t.youtube_id] = t; });
+    const allRich = Ratings.getAll().filter((r) => r.annotation_pass === "rich-v1" && ["LOVE", "MID", "SLOP"].includes(r.rating_3class) && byId[r.youtube_id]);
+    const since = Number(localStorage.getItem("sorter.lastBattleDoneTs") || 0);   // songs rated since the last FINISHED battle = this batch
+    const rated = allRich.filter((r) => (Date.parse(r.rated_at) || 0) > since);
+    const tiers = {}; rated.forEach((r) => { (tiers[r.rating_3class] = tiers[r.rating_3class] || []).push(byId[r.youtube_id]); });
+    const strip = (x) => (x || "").replace("yt:", "");
+    const compared = new Set((Ratings.getComparisons ? Ratings.getComparisons() : []).map((c) => window.Ranking.pairKey(strip(c.a_id), strip(c.b_id))));
+    const pairs = [];
+    for (const tier of Object.keys(tiers)) { const pool = tiers[tier]; for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++) { if (!compared.has(window.Ranking.pairKey(pool[i].youtube_id, pool[j].youtube_id))) pairs.push({ a: pool[i], b: pool[j], context: tier, battle: true }); } }
+    if (!pairs.length) {                                   // explain WHY, with the actual batch breakdown
+      const cnt = (arr) => ["LOVE", "MID", "SLOP"].map((t) => `${arr.filter((r) => r.rating_3class === t).length} ${t}`).join(" · ");
+      const tierMax = Math.max(0, ...["LOVE", "MID", "SLOP"].map((t) => rated.filter((r) => r.rating_3class === t).length));
+      let msg;
+      if (rated.length === 0 && allRich.length >= 2) msg = `No new songs since your last finished battle (${allRich.length} rated total) — use 🏆 Playoff to rank across all, or label more.`;
+      else if (rated.length === 0) msg = "No Round-2 songs rated yet here — label a few (♥/~/✗), then ⚔ Battle.";
+      else if (tierMax >= 2) msg = "You've already compared every same-rating pair in this batch — 🏆 Playoff re-ranks across all, or label more.";
+      else msg = `Batch: ${cnt(rated)} — need 2 with the SAME rating. (🏆 Playoff ranks across all.)`;
+      PWA.showToast(msg, 4600);
+      console.log("[battle] done-watermark:", since ? new Date(since).toLocaleString() : "none", "| this batch:", cnt(rated), "| all rich-v1:", cnt(allRich));
+      return;
+    }
+    for (let i = pairs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pairs[i], pairs[j]] = [pairs[j], pairs[i]]; }
+    battleQueue = pairs.slice(0, 12).map(flipPair);
+    battleStartedAt = Date.now(); battleIsLocal = true;       // batch consumed only when the battle is FINISHED (pairNext)
+    Player.pause();
+    PWA.showToast(`⚔ Batch battle: ${battleQueue.length} same-rating matchups`, 2600);
+    pairNext(); openModal("pairwise-modal");
+  }
+  function pairOpen() {
+    if (!(Player.backendName && Player.backendName() === "local" && Player.hasFolder && Player.hasFolder())) {
+      PWA.showToast("Tap 🎚 Round 2 first to load the local audio", 2800); return;
+    }
+    Player.pause(); battleQueue = null; battleIsLocal = false;
+    pairState = pairPick();
+    if (!pairState) { PWA.showToast("Need ≥2 same-style tracks", 2000); return; }
+    pairRender(); openModal("pairwise-modal");
+  }
+  function pairVerdict(v) {
+    if (!pairState) return;
+    Ratings.recordComparison({ aId: `yt:${pairState.a.youtube_id}`, bId: `yt:${pairState.b.youtube_id}`, verdict: Number(v), context: pairState.context, test: testMode });
+    syncAll();
+    PWA.showToast("Logged comparison", 900);
+    pairNext();
+  }
+  // ---------------- global playoff (flexible tier-seeded ranking across ALL rated songs) ----------------
+  let playoffTier = "ALL";
+  const TIER_BASE = { LOVE: 1800, MID: 1500, SLOP: 1200 };   // Elo priors so the global order respects the labels
+  function ratedTiers() {
+    const byId = {}; (Player.getTracks ? Player.getTracks() : []).forEach((t) => { byId[t.youtube_id] = t; });
+    const tiers = { LOVE: [], MID: [], SLOP: [] };
+    Ratings.getAll().forEach((r) => { if (r.annotation_pass === "rich-v1" && tiers[r.rating_3class] && byId[r.youtube_id]) tiers[r.rating_3class].push(byId[r.youtube_id]); });
+    return { tiers, byId };
+  }
+  function tierComps(idSet) {
+    const strip = (x) => (x || "").replace("yt:", "");
+    return (Ratings.getComparisons ? Ratings.getComparisons() : [])
+      .map((c) => ({ a: strip(c.a_id), b: strip(c.b_id), verdict: c.verdict }))
+      .filter((c) => idSet.has(c.a) && idSet.has(c.b));
+  }
+  function openPlayoff(tier) {
+    if (!(Player.backendName && Player.backendName() === "local" && Player.hasFolder && Player.hasFolder())) { PWA.showToast("Tap 🎚 Round 2 first", 2600); return; }
+    playoffTier = tier || playoffTier || "ALL";
+    renderPlayoff();
+    openModal("playoff-modal");
+  }
+  function globalRanking() {                                 // one tier-seeded Elo over ALL rated songs (incl. cross-tier comps)
+    const { tiers, byId } = ratedTiers();
+    const order = ["LOVE", "MID", "SLOP"];
+    const all = [], tierOf = {}, bases = {};
+    order.forEach((t) => (tiers[t] || []).forEach((x) => { all.push(x); tierOf[x.youtube_id] = t; bases[x.youtube_id] = TIER_BASE[t]; }));
+    const ids = all.map((x) => x.youtube_id);
+    const comps = tierComps(new Set(ids));
+    const R = window.Ranking.elo(ids, comps, { bases });
+    return { tiers, byId, order, all, tierOf, ids, comps, R };
+  }
+  function renderPlayoff() {
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const g = globalRanking();
+    const view = playoffTier === "ALL" ? g.all : g.all.filter((x) => g.tierOf[x.youtube_id] === playoffTier);
+    const ranked = view.slice().sort((a, b) => (g.R[b.youtube_id] || 0) - (g.R[a.youtube_id] || 0));
+    const lbl = { ALL: "All", LOVE: "♥ Love", MID: "~ Mid", SLOP: "✗ Slop" }[playoffTier] || playoffTier;
+    $("playoff-title").textContent = `🏆 ${lbl} ranking`;
+    $("playoff-sub").textContent = g.ids.length < 2 ? "Need ≥2 rated tracks to rank" : `${ranked.length} shown · ${g.comps.length} comparisons so far`;
+    const chip = (t) => `<span class="po-tier po-${t}">${({ LOVE: "♥", MID: "~", SLOP: "✗" }[t]) || ""}</span>`;
+    $("playoff-list").innerHTML = ranked.map((t, i) => `<li><span class="po-rank">${i + 1}</span>${playoffTier === "ALL" ? chip(g.tierOf[t.youtube_id]) : ""}<span class="po-name">${esc(t.artist || "")} — ${esc(t.title || "")}</span><span class="po-score">${Math.round(g.R[t.youtube_id] || 1500)}</span></li>`).join("");
+    document.querySelectorAll(".playoff-tab").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tier === playoffTier ? "true" : "false"));
+  }
+  function playoffPlayRound() {
+    const g = globalRanking();
+    if (g.ids.length < 2) { PWA.showToast("Need ≥2 rated songs to rank", 2400); return; }
+    const compared = new Set(g.comps.map((c) => window.Ranking.pairKey(c.a, c.b)));
+    const pools = g.order.map((t) => ({ tier: t, ids: (g.tiers[t] || []).map((x) => x.youtube_id) }));   // keep all 3 (even empty) so tier gaps are stable
+    const round = window.Ranking.flexibleRound(pools, g.R, compared, { wildcard: 0.3, maxGap: 3, upset: 0.2 });
+    if (!round.length) { PWA.showToast("Every nearby matchup has been played — ranking's settled, or label more.", 3200); return; }
+    battleIsLocal = false;
+    battleQueue = round.map((m) => ({ a: g.byId[m.a], b: g.byId[m.b], context: m.upset ? "upset" : m.cross ? "cross" : m.tier, battle: true, playoff: true })).slice(0, 12).map(flipPair);
+    closeModal("playoff-modal");
+    Player.pause();
+    PWA.showToast(`🏆 Playoff round: ${battleQueue.length} matchups (mostly close, some wildcards)`, 2800);
+    pairNext(); openModal("pairwise-modal");
+  }
+  if ($("btn-playoff")) $("btn-playoff").addEventListener("click", () => openPlayoff(playoffTier));
+  if ($("close-playoff")) $("close-playoff").addEventListener("click", () => closeModal("playoff-modal"));
+  if ($("playoff-round")) $("playoff-round").addEventListener("click", playoffPlayRound);
+  document.querySelectorAll(".playoff-tab").forEach((b) => b.addEventListener("click", () => openPlayoff(b.dataset.tier)));
+
+  // ---------------- insights / stats tracker ----------------
+  function snapshotRanking() {                              // capture global Elo over time → movers (rising/dropping)
+    try {
+      const g = globalRanking(); if (g.ids.length < 2) return;
+      const snaps = JSON.parse(localStorage.getItem("sorter.eloSnapshots") || "[]");
+      const R = {}; g.ids.forEach((id) => { R[id] = Math.round(g.R[id]); });
+      const last = snaps[snaps.length - 1];
+      if (!last || JSON.stringify(last.R) !== JSON.stringify(R)) { snaps.push({ ts: Date.now(), R }); while (snaps.length > 40) snaps.shift(); localStorage.setItem("sorter.eloSnapshots", JSON.stringify(snaps)); }
+    } catch (_) {}
+  }
+  function openInsights() {
+    if (!(Player.backendName && Player.backendName() === "local" && Player.hasFolder && Player.hasFolder())) { PWA.showToast("Tap 🎚 Round 2 first", 2600); return; }
+    if (!JSON.parse(localStorage.getItem("sorter.eloSnapshots") || "[]").length) snapshotRanking();   // baseline → movers after the 1st round
+    renderInsights(); openModal("insights-modal");
+  }
+  function renderInsights() {
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const g = globalRanking();
+    const rated = Ratings.getAll().filter((r) => r.annotation_pass === "rich-v1" && ["LOVE", "MID", "SLOP"].includes(r.rating_3class) && g.byId[r.youtube_id]);
+    const comps = g.comps;
+    const nm = (id) => { const t = g.byId[id] || {}; return `${esc(t.artist || "?")} — ${esc(t.title || "?")}`; };
+    const chip = (id) => `<span class="po-tier po-${g.tierOf[id]}">${({ LOVE: "♥", MID: "~", SLOP: "✗" }[g.tierOf[id]]) || ""}</span>`;
+    const rec = {}; g.ids.forEach((id) => rec[id] = { w: 0, l: 0, t: 0 });
+    comps.forEach((c) => { if (!(c.a in rec) || !(c.b in rec)) return; if (c.verdict < 0) { rec[c.a].w++; rec[c.b].l++; } else if (c.verdict > 0) { rec[c.b].w++; rec[c.a].l++; } else { rec[c.a].t++; rec[c.b].t++; } });
+    const sorted = g.all.slice().sort((a, b) => (g.R[b.youtube_id] || 0) - (g.R[a.youtube_id] || 0));
+    const rowR = (t, i) => { const id = t.youtube_id, r = rec[id]; return `<li><span class="po-rank">${i + 1}</span>${chip(id)}<span class="po-name">${nm(id)}</span><span class="ins-rec" title="Head-to-head record: wins-losses${r.t ? "-ties" : ""}">${r.w}-${r.l}${r.t ? "-" + r.t : ""}</span><span class="po-score" title="Ranking score (Elo). Higher = you pick it more often.">${Math.round(g.R[id])}</span></li>`; };
+    const topRows = sorted.slice(0, 6).map(rowR).join("");
+    const botRows = sorted.length > 9 ? `<li class="ins-sep">⋯</li>` + sorted.slice(-3).map((t, i) => rowR(t, sorted.length - 3 + i)).join("") : "";
+    const snaps = JSON.parse(localStorage.getItem("sorter.eloSnapshots") || "[]");
+    let moversHtml = "<p class='ins-dim'>Movers appear after you finish a round or two.</p>";
+    if (snaps.length >= 2) {
+      const cur = snaps[snaps.length - 1].R, prev = snaps[snaps.length - 2].R;
+      const deltas = g.ids.filter((id) => id in cur && id in prev).map((id) => ({ id, d: cur[id] - prev[id] })).filter((x) => x.d !== 0).sort((a, b) => b.d - a.d);
+      if (deltas.length) {
+        const risers = deltas.filter((x) => x.d > 0).slice(0, 3), fallers = deltas.filter((x) => x.d < 0).slice(-3);
+        moversHtml = `<ul class="ins-list">${risers.map((x) => `<li>▲ ${chip(x.id)}<span class="po-name">${nm(x.id)}</span><span class="po-score up">+${x.d}</span></li>`).join("")}${fallers.map((x) => `<li>▼ ${chip(x.id)}<span class="po-name">${nm(x.id)}</span><span class="po-score down">${x.d}</span></li>`).join("")}</ul>`;
+      } else moversHtml = "<p class='ins-dim'>No movement since the last round.</p>";
+    }
+    const tc = { LOVE: 0, MID: 0, SLOP: 0 }; rated.forEach((r) => tc[r.rating_3class]++);
+    const conf = rated.filter((r) => r.confidence).length, fam = rated.filter((r) => r.is_familiar).length;
+    const marks = rated.filter((r) => (r.segments || []).length || (r.neutral_markers || []).length).length;
+    let possible = 0; ["LOVE", "MID", "SLOP"].forEach((t) => { possible += tc[t] * (tc[t] - 1) / 2; });
+    const comparedPairs = new Set(comps.map((c) => window.Ranking.pairKey(c.a, c.b))).size;
+    const settled = possible ? Math.round(100 * Math.min(comparedPairs, possible) / possible) : 0;
+    const nonTie = comps.filter((c) => c.verdict !== 0);
+    let agree = 0; nonTie.forEach((c) => { const w = c.verdict < 0 ? c.a : c.b, l = c.verdict < 0 ? c.b : c.a; if ((g.R[w] || 0) > (g.R[l] || 0)) agree++; });
+    const orderC = nonTie.length ? Math.round(100 * agree / nonTie.length) : null;
+    $("insights-sub").textContent = `${rated.length} rated · ${comps.length} comparisons · ${snaps.length} snapshots`;
+    $("insights-body").innerHTML = `
+      <div class="ins-section"><h3 title="How far each song's ranking score moved since your last finished round (▲ up / ▼ down)">📈 Movers <span class="ins-dim">since last round</span></h3>${moversHtml}</div>
+      <div class="ins-section"><h3 title="All your songs ordered by ranking score from your head-to-head verdicts — your first-pass quality order">🏅 Quality ranking</h3><ol class="ins-list ranked">${topRows}${botRows}</ol></div>
+      <div class="ins-section"><h3 title="How complete and rich your labeling is so far">🧪 Labeling health</h3><ul class="ins-kv">
+        <li title="Songs rated, split into LOVE · MID · SLOP">Rated <b>${rated.length}</b> — ♥${tc.LOVE} · ~${tc.MID} · ✗${tc.SLOP}</li>
+        <li title="How often you set the confidence / familiarity channels — training uses these as weights">Confidence set <b>${conf}/${rated.length}</b> · familiarity <b>${fam}/${rated.length}</b></li>
+        <li title="Songs with at least one segment or neutral marker placed on the waveform">Tracks with markers <b>${marks}/${rated.length}</b></li>
+        <li title="Share of all possible same-tier matchups you've actually battled — 100% = fully ranked">Ranking settled <b>${settled}%</b> <span class="ins-dim">(${comparedPairs}/${possible} same-tier pairs compared)</span></li>
+      </ul></div>
+      <div class="ins-section"><h3 title="Whether your verdicts form one coherent order or contradict each other">🎯 Consistency</h3><ul class="ins-kv">
+        <li title="Share of verdicts where the winner also ranks higher overall — high = consistent taste, low = cyclic/noisy">Verdicts agree with the fitted order: <b>${orderC == null ? "—" : orderC + "%"}</b> ${orderC == null ? "" : orderC >= 90 ? "✓ strong" : orderC >= 70 ? "ok" : "⚠ noisy/cyclic"}</li>
+        <li title="Total head-to-head verdicts logged, and how many distinct songs they cover">${comps.length} comparisons across ${new Set(comps.flatMap((c) => [c.a, c.b])).size} songs</li>
+      </ul></div>`;
+  }
+  if ($("btn-insights")) $("btn-insights").addEventListener("click", openInsights);
+  if ($("close-insights")) $("close-insights").addEventListener("click", () => closeModal("insights-modal"));
+
+  // ---------------- queue map (jump anywhere; see rated vs unheard) ----------------
+  function openQueueMap() {
+    if (!(Player.getTracks && Player.getTracks().length)) { PWA.showToast("Load a queue first (🎚 Round 2)", 2600); return; }
+    renderQueueMap(); openModal("queuemap-modal");
+  }
+  function renderQueueMap() {
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const tracks = Player.getTracks ? Player.getTracks() : [];
+    const curId = ((Player.currentTrack && Player.currentTrack()) || {}).youtube_id;
+    let ratedN = 0;
+    $("queuemap-grid").innerHTML = tracks.map((t, i) => {
+      const r = Ratings.getRating(t.youtube_id);
+      const cls = r && r.rating_3class ? r.rating_3class : "unrated";
+      if (r && r.rating_3class) ratedN++;
+      const cur = t.youtube_id === curId ? " cur" : "";
+      const dot = { LOVE: "♥", MID: "~", SLOP: "✗", unrated: "·" }[cls];
+      const name = `${t.artist ? esc(t.artist) + " — " : ""}${esc(t.title || t.video_title || t.youtube_id || "?")}`;
+      const tip = cls === "unrated" ? "unheard" : `${r.rating_3class}${r.rating_5point ? " (" + r.rating_5point + ")" : ""}`;
+      return `<button type="button" class="qm-row qm-${cls}${cur}" data-idx="${i}" title="${tip}"><span class="qm-i">${i + 1}</span><span class="qm-dot">${dot}</span><span class="qm-name">${name}</span></button>`;
+    }).join("");
+    $("queuemap-sub").textContent = `${ratedN}/${tracks.length} rated · tap a row to jump there`;
+    const curEl = document.querySelector("#queuemap-grid .qm-cell.cur"); if (curEl) curEl.scrollIntoView({ block: "center" });
+  }
+  if ($("btn-queuemap")) $("btn-queuemap").addEventListener("click", openQueueMap);
+  if ($("close-queuemap")) $("close-queuemap").addEventListener("click", () => closeModal("queuemap-modal"));
+  if ($("queuemap-grid")) $("queuemap-grid").addEventListener("click", (e) => {
+    const row = e.target.closest(".qm-row"); if (!row) return;
+    closeModal("queuemap-modal");
+    if (Player.playAt) Player.playAt(Number(row.dataset.idx));
+  });
+
+  if ($("menu-pairwise")) $("menu-pairwise").addEventListener("click", () => { closeModal("menu-modal"); pairOpen(); });
+  if ($("btn-battle")) $("btn-battle").addEventListener("click", startBattle);
+  if ($("close-pairwise")) $("close-pairwise").addEventListener("click", () => { pairStopAudio(); closeModal("pairwise-modal"); });
+  if ($("pair-skip")) $("pair-skip").addEventListener("click", pairNext);
+  document.querySelectorAll(".verdict-btn").forEach((b) => b.addEventListener("click", () => pairVerdict(b.dataset.verdict)));
+
+  // Test mode toggle: flag actions as test so the real pass stays clean.
+  if ($("btn-testmode")) $("btn-testmode").addEventListener("click", () => {
+    testMode = !testMode;
+    $("btn-testmode").textContent = `🧪 Test: ${testMode ? "ON" : "off"}`;
+    $("btn-testmode").setAttribute("aria-pressed", String(testMode));
+    document.body.classList.toggle("testing", testMode);
+    const banner = $("test-banner"); if (banner) banner.classList.toggle("hidden", !testMode);
+    PWA.showToast(testMode ? "🧪 Test mode ON — actions flagged as test" : "Test mode off — real data", 1800);
+  });
+
+  // Submit & Analyze: write the current labels to round2_trial.json (File System Access) for Claude to review.
+  function trialDB() { return new Promise((res, rej) => { const r = indexedDB.open("sorter-trial", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+  async function trialGet(k) { const d = await trialDB(); return new Promise((res) => { const t = d.transaction("kv").objectStore("kv").get(k); t.onsuccess = () => res(t.result); t.onerror = () => res(null); }); }
+  async function trialPut(k, v) { const d = await trialDB(); d.transaction("kv", "readwrite").objectStore("kv").put(v, k); }
+  async function submitForAnalysis() {
+    if (!window.showSaveFilePicker) { PWA.showToast("Submit needs Chrome/Edge (File System Access)", 2800); return; }
+    try {
+      const payload = Exporter.buildPayload();
+      let h = await trialGet("file");
+      if (h && (await h.queryPermission({ mode: "readwrite" })) !== "granted") { if ((await h.requestPermission({ mode: "readwrite" })) !== "granted") h = null; }
+      if (!h) { h = await window.showSaveFilePicker({ suggestedName: "round2_trial.json", types: [{ description: "JSON", accept: { "application/json": [".json"] } }] }); await trialPut("file", h); }
+      const w = await h.createWritable(); await w.write(JSON.stringify(payload, null, 2)); await w.close();
+      const n = (payload.tracks || []).filter((t) => t.annotation_pass).length;
+      PWA.showToast(`Submitted ${n} labels + ${(payload.comparisons || []).length} comparisons → round2_trial.json. Now tell Claude: "analyze".`, 5000);
+    } catch (e) { console.warn("submit failed", e); PWA.showToast("Submit cancelled / failed", 2500); }
+  }
+  if ($("btn-submit-analyze")) $("btn-submit-analyze").addEventListener("click", submitForAnalysis);
 
   // ----------------- header / menu / modals -----------------
 
@@ -540,6 +1086,27 @@
     renderRecent();
     openModal("recent-modal");
   });
+  $("menu-kappa").addEventListener("click", () => {
+    closeModal("menu-modal");
+    const existing = Ratings.getKappaTest();
+    if (existing && existing.responses.length && existing.responses.length < existing.plan.length) {
+      if (confirm(`Resume the κ-test in progress (${existing.responses.length}/${existing.plan.length})?\n\nCancel = start a fresh one.`)) {
+        kappaMode = true;
+        prevActivePlaylistId = active?.playlistId || null;
+        resumeChecked = true;
+        const remaining = existing.plan.map((p) => p.youtube_id)
+          .filter((id) => !existing.responses.some((r) => r.youtube_id === id));
+        Player.onReady(() => Player.loadVideoIds(remaining));
+        updateKappaBanner();
+        showOverlayIfMobile();
+        return;
+      }
+    }
+    startKappa();
+  });
+  $("kappa-end").addEventListener("click", finishKappa);
+  $("kappa-restart").addEventListener("click", () => { closeModal("kappa-modal"); Ratings.clearKappaTest(); startKappa(); });
+  $("close-kappa").addEventListener("click", () => closeModal("kappa-modal"));
   $("menu-clear-session").addEventListener("click", () => {
     if (confirm("Clear ratings from the CURRENT session only?")) {
       Ratings.clearSession(); Stats.refreshCompact(); updateRatedCountNote();

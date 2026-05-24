@@ -21,9 +21,11 @@ window.Exporter = (() => {
         device_breakdown: deviceBreakdown,
         consistency_kappa: k == null ? null : Number(k.toFixed(3)),
         consistency_pairs: consistency.length,
+        comparisons: Ratings.getComparisons ? Ratings.getComparisons().length : 0,
       },
       tracks: ratings,
       consistency_checks: consistency,
+      comparisons: Ratings.getComparisons ? Ratings.getComparisons() : [],
       sessions: [session],
       batches: Ratings.getBatches(),
     };

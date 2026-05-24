@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v20-2026-05-20-enrich-on-load";
+const VERSION = "v22-2026-05-23-round2-rich";
 const SHELL = [
   "./",
   "./index.html",
@@ -7,14 +7,23 @@ const SHELL = [
   "./css/styles.css",
   "./js/app.js",
   "./js/youtube-player.js",
+  "./js/local-player.js",
+  "./js/player.js",
   "./js/rating-manager.js",
   "./js/queue-manager.js",
+  "./js/ranking.js",
+  "./js/segments.js",
+  "./js/waveform.js",
+  "./js/round2-health.js",
   "./js/stats.js",
   "./js/export.js",
   "./js/pwa.js",
   "./js/sync.js",
   "./js/github-sync.js",
   "./js/youtube-meta.js",
+  "./js/vendor/wavesurfer.min.js",
+  "./js/vendor/wavesurfer.regions.min.js",
+  "./js/vendor/wavesurfer.minimap.min.js",
   "./icons/icon.svg",
   "./icons/icon-maskable.svg",
 ];

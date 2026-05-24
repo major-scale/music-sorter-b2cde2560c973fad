@@ -7,23 +7,50 @@
 // Each record matches the spec's data model. track_id = `yt:${youtube_id}`.
 
 window.Ratings = (() => {
-  const KEY = "sorter.ratings.v1";
+  const KEY = "sorter.ratings.v2";              // Round 2 rich pass (v1 store preserved separately)
   const SESSION_KEY = "sorter.session.v1";
   const CONSISTENCY_KEY = "sorter.consistency.v1";
   const PRESET_KEY = "sorter.presets.v1";
   const SETTINGS_KEY = "sorter.settings.v1";
   const BATCHES_KEY = "sorter.batches.v1";
   const ACTIVE_BATCH_KEY = "sorter.activeBatch.v1";
+  const KAPPATEST_KEY = "sorter.kappatest.v1";
+  const COMPARISONS_KEY = "sorter.comparisons.v2"; // pairwise/playoff verdicts
   const IDLE_MIN_FOR_NEW_SESSION = 30 * 60 * 1000; // 30 minutes
 
   const DEFAULT_SETTINGS = { nudgeSeconds: 3, startOffsetSeconds: 20, doubleTapMs: 500 };
 
   const RATING_TO_5PT_DEFAULT = { LOVE: 4, MID: 3, SLOP: 2 };
+  // 5-point scale: 1 HATE · 2 DISLIKE · 3 MID · 4 LIKE · 5 LOVE → buckets must agree with the 3-class.
+  const CLASS_5PT_RANGE = { SLOP: [1, 2], MID: [3, 3], LOVE: [4, 5] };
+  // Keep rating_5point consistent with rating_3class: keep an in-range detail, else snap to the class default.
+  function reconcile5pt(cls, fivePt) {
+    const r = CLASS_5PT_RANGE[cls];
+    if (!r) return fivePt != null ? fivePt : null;
+    return (fivePt != null && fivePt >= r[0] && fivePt <= r[1]) ? fivePt : RATING_TO_5PT_DEFAULT[cls];
+  }
+  // One-time repair of records saved before reconciliation (e.g. LOVE paired with a 2). Returns #fixed.
+  function reconcileAll() {
+    let fixed = 0;
+    for (const id in ratings) {
+      const rec = ratings[id];
+      if (!rec || !rec.rating_3class) continue;
+      const want = reconcile5pt(rec.rating_3class, rec.rating_5point);
+      if (want !== rec.rating_5point) { rec.rating_5point = want; fixed++; }
+    }
+    if (fixed) saveJSON(KEY, ratings);
+    return fixed;
+  }
   const RATINGS_BETWEEN_CONSISTENCY = 50;
 
   let ratings = loadJSON(KEY, {});
   let session = ensureSession();
   let consistency = loadJSON(CONSISTENCY_KEY, []); // [{trackId, prevLabel, newLabel, prev5, new5, ts}]
+  // Dedicated blind re-rate session for measuring intra-rater reliability (κ).
+  // { startedAt, plan:[{youtube_id, original_label, original_5pt, artist, title}], responses:[{youtube_id, rerate_label, rerate_5pt, time_to_rate, listen_seconds, ts}] }
+  let kappaTest = loadJSON(KAPPATEST_KEY, null);
+  // Pairwise/playoff verdicts: [{a_id,b_id,verdict(-2..2),context,session_id,device,ts}]
+  let comparisons = loadJSON(COMPARISONS_KEY, []);
 
   // ----------------- settings -----------------
 
@@ -213,6 +240,112 @@ window.Ratings = (() => {
     return 1 - num / den;
   }
 
+  // Unweighted Cohen's κ over the 3 nominal classes.
+  function cohenKappa(pairs) {
+    const code = { SLOP: 0, MID: 1, LOVE: 2 };
+    const f = pairs
+      .map((p) => [code[p.prevLabel], code[p.newLabel]])
+      .filter((p) => p[0] != null && p[1] != null);
+    if (f.length < 2) return null;
+    const n = f.length, k = 3;
+    const O = Array.from({ length: k }, () => new Array(k).fill(0));
+    const row = new Array(k).fill(0), col = new Array(k).fill(0);
+    for (const [a, b] of f) { O[a][b]++; row[a]++; col[b]++; }
+    let po = 0, pe = 0;
+    for (let i = 0; i < k; i++) { po += O[i][i]; pe += (row[i] * col[i]) / n; }
+    po /= n; pe /= n;
+    if (pe >= 1) return 1;
+    return (po - pe) / (1 - pe);
+  }
+
+  // ----------------- blind reliability test (κ) -----------------
+  // A self-contained session: sample already-rated tracks, replay them, take a
+  // FRESH rating without revealing the old one, then score agreement. Never
+  // overwrites the original ratings — responses live in their own store.
+
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function startKappaTest(n = 50) {
+    const all = Object.values(ratings).filter((r) => ["LOVE", "MID", "SLOP"].includes(r.rating_3class));
+    const byLabel = { LOVE: [], MID: [], SLOP: [] };
+    for (const r of all) byLabel[r.rating_3class].push(r);
+    Object.values(byLabel).forEach(shuffle);
+    const perLabel = Math.ceil(n / 3);
+    let picked = [];
+    for (const lab of ["LOVE", "MID", "SLOP"]) picked = picked.concat(byLabel[lab].slice(0, perLabel));
+    picked = shuffle(picked).slice(0, n);
+    if (!picked.length) return null;
+    kappaTest = {
+      startedAt: new Date().toISOString(),
+      plan: picked.map((r) => ({
+        youtube_id: r.youtube_id,
+        original_label: r.rating_3class,
+        original_5pt: r.rating_5point,
+        original_rated_at: r.rated_at,
+        artist: r.artist,
+        title: r.title,
+      })),
+      responses: [],
+    };
+    saveJSON(KAPPATEST_KEY, kappaTest);
+    return kappaTest;
+  }
+
+  function recordKappaRerate(o) {
+    if (!kappaTest) return null;
+    kappaTest.responses = kappaTest.responses.filter((r) => r.youtube_id !== o.youtube_id);
+    kappaTest.responses.push({
+      youtube_id: o.youtube_id,
+      rerate_label: o.rerate_label,
+      rerate_5pt: o.rerate_5pt != null ? o.rerate_5pt : null,
+      time_to_rate: o.timeToRate != null ? Math.round(o.timeToRate * 10) / 10 : null,
+      listen_seconds: Math.round(o.listenSeconds || 0),
+      ts: new Date().toISOString(),
+    });
+    saveJSON(KAPPATEST_KEY, kappaTest);
+    return kappaTest;
+  }
+
+  function getKappaTest() { return kappaTest; }
+  function clearKappaTest() { kappaTest = null; saveJSON(KAPPATEST_KEY, null); }
+
+  function computeKappaTest() {
+    if (!kappaTest || !kappaTest.responses.length) return null;
+    const origById = {};
+    for (const p of kappaTest.plan) origById[p.youtube_id] = p;
+    const pairs = [];
+    for (const r of kappaTest.responses) {
+      const o = origById[r.youtube_id];
+      if (!o) continue;
+      pairs.push({ prevLabel: o.original_label, newLabel: r.rerate_label, prev5: o.original_5pt, new5: r.rerate_5pt });
+    }
+    const n = pairs.length;
+    let agree = 0;
+    const byLabel = { LOVE: { n: 0, agree: 0 }, MID: { n: 0, agree: 0 }, SLOP: { n: 0, agree: 0 } };
+    const confusion = {};
+    for (const p of pairs) {
+      byLabel[p.prevLabel].n++;
+      if (p.prevLabel === p.newLabel) { agree++; byLabel[p.prevLabel].agree++; }
+      const key = `${p.prevLabel}→${p.newLabel}`;
+      confusion[key] = (confusion[key] || 0) + 1;
+    }
+    return {
+      n,
+      planned: kappaTest.plan.length,
+      exactAgree: n ? agree / n : null,
+      cohenK: cohenKappa(pairs),
+      weightedK: weightedKappa(pairs),
+      byLabel,
+      confusion,
+    };
+  }
+
   // ----------------- public API -----------------
 
   // Strip trailing "(Official Music Video)" / "[Lyric Video]" / "(Lyrics)" / etc.
@@ -272,6 +405,17 @@ window.Ratings = (() => {
     return ratings[`yt:${youtubeId}`] || null;
   }
 
+  // Patch confidence / familiarity / 5-point on an EXISTING record without re-rating (no rated_at bump). No-op if unrated.
+  function setDetail(youtubeId, fields) {
+    const rec = ratings[`yt:${youtubeId}`];
+    if (!rec || !rec.rating_3class) return null;
+    if (fields.confidence !== undefined) rec.confidence = fields.confidence;
+    if (fields.isFamiliar !== undefined) rec.is_familiar = fields.isFamiliar;
+    if (fields.rating5point !== undefined) rec.rating_5point = reconcile5pt(rec.rating_3class, fields.rating5point);
+    saveJSON(KEY, ratings);
+    return rec;
+  }
+
   function isConsistencyTarget(youtubeId) {
     return !!_pendingConsistency && _pendingConsistency.youtube_id === youtubeId;
   }
@@ -282,7 +426,9 @@ window.Ratings = (() => {
 
   function rate(opts) {
     // opts: { youtubeId, videoTitle, artist, title, queuedFrom, sourcePlaylistId,
-    //         sourcePlaylistTitle, rating3class, rating5point, listenSeconds, notes, subgenreTags }
+    //         sourcePlaylistTitle, rating3class, rating5point, listenSeconds, notes, subgenreTags,
+    //         confidence ("sure"|"think_so"|"guess"), isFamiliar ("novel"|"known"),
+    //         neutralAnchorSeconds, segments [{start_s,end_s,label,strength,ts}], annotationPass }
     const id = `yt:${opts.youtubeId}`;
     const existing = ratings[id];
     const isConsistency = isConsistencyTarget(opts.youtubeId);
@@ -302,9 +448,7 @@ window.Ratings = (() => {
       subgenre_tags: opts.subgenreTags || existing?.subgenre_tags || [],
       rated_at: new Date().toISOString(),
       rating_3class: opts.rating3class,
-      rating_5point: opts.rating5point != null
-        ? opts.rating5point
-        : (RATING_TO_5PT_DEFAULT[opts.rating3class] ?? null),
+      rating_5point: reconcile5pt(opts.rating3class, opts.rating5point),
       listen_duration_seconds: Math.round(opts.listenSeconds || 0),
       time_to_rate_seconds: opts.timeToRate != null ? Math.round(opts.timeToRate * 10) / 10 : null,
       notes: opts.notes || "",
@@ -314,6 +458,13 @@ window.Ratings = (() => {
       is_consistency_check: isConsistency,
       previous_rating_3class: isConsistency ? existing?.rating_3class || null : (existing?.rating_3class || null),
       device: session.device,
+      // Round 2 rich-annotation fields:
+      confidence: opts.confidence != null ? opts.confidence : (existing?.confidence ?? null),
+      is_familiar: opts.isFamiliar != null ? opts.isFamiliar : (existing?.is_familiar ?? null),
+      neutral_anchor_seconds: opts.neutralAnchorSeconds != null ? opts.neutralAnchorSeconds : (existing?.neutral_anchor_seconds ?? null),
+      neutral_markers: opts.neutralMarkers != null ? opts.neutralMarkers : (existing?.neutral_markers ?? []),
+      segments: opts.segments != null ? opts.segments : (existing?.segments ?? []),
+      annotation_pass: opts.annotationPass || existing?.annotation_pass || "rich-v1",
     };
 
     ratings[id] = record;
@@ -401,14 +552,41 @@ window.Ratings = (() => {
     }
     saveJSON(BATCHES_KEY, batches);
 
+    if (payload && Array.isArray(payload.comparisons) && payload.comparisons.length) {
+      const seenC = new Set(comparisons.map((c) => `${c.a_id}|${c.b_id}|${c.ts}`));
+      for (const c of payload.comparisons) {
+        const k = `${c.a_id}|${c.b_id}|${c.ts}`;
+        if (c && !seenC.has(k)) { comparisons.push(c); seenC.add(k); }
+      }
+      saveJSON(COMPARISONS_KEY, comparisons);
+    }
+
     return { added, updated, total: Object.keys(ratings).length };
   }
+
+  // ----------------- pairwise comparisons -----------------
+  function recordComparison(o) {
+    // o: { aId, bId, verdict (-2..2: -2 A>>B, 0 tie, +2 B>>A), context, test }
+    const rec = {
+      a_id: o.aId, b_id: o.bId, verdict: o.verdict,
+      context: o.context || null, test_mode: !!o.test,
+      session_id: session.sessionId, device: session.device,
+      ts: new Date().toISOString(),
+    };
+    comparisons.push(rec);
+    saveJSON(COMPARISONS_KEY, comparisons);
+    return rec;
+  }
+  function getComparisons() { return comparisons.slice(); }
+  function clearComparisons() { comparisons = []; saveJSON(COMPARISONS_KEY, comparisons); }
 
   function clearAll() {
     ratings = {};
     consistency = [];
+    comparisons = [];
     saveJSON(KEY, ratings);
     saveJSON(CONSISTENCY_KEY, consistency);
+    saveJSON(COMPARISONS_KEY, comparisons);
   }
 
   function clearSession() {
@@ -448,8 +626,10 @@ window.Ratings = (() => {
 
   return {
     parseTitle, cleanTitle, getRating, getRatedIds, getAll, getConsistency,
-    counts, kappa, rate, deleteRating, putRecord, reRate, importPayload, enrich, unenrichedIds, clearAll, clearSession, getSession,
+    counts, kappa, rate, reconcile5pt, reconcileAll, setDetail, deleteRating, putRecord, reRate, importPayload, enrich, unenrichedIds, clearAll, clearSession, getSession,
     maybeQueueConsistencyCheck, setConsistencyTarget, isConsistencyTarget, clearConsistencyTarget,
+    startKappaTest, recordKappaRerate, getKappaTest, clearKappaTest, computeKappaTest,
+    recordComparison, getComparisons, clearComparisons,
     getPresets, setPresets,
     getSettings, saveSettings,
     getBatches, getActiveBatch, setActiveBatch, ensureBatchForPlaylist, renameBatch, batchSummaries,

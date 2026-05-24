@@ -11,7 +11,7 @@
 //
 // The YouTube IFrame API calls window.onYouTubeIframeAPIReady() once loaded.
 
-window.Player = (() => {
+window.YTBackend = (() => {
   let yt = null;
   let ready = false;
   const readyQueue = [];
@@ -115,6 +115,10 @@ window.Player = (() => {
       onReady(() => yt.loadPlaylist({ list: playlistId, listType: "playlist" }));
       if (!ready) pendingPlaylistId = playlistId;
     },
+    // Load an explicit list of video IDs as an ad-hoc playlist (used by the κ test).
+    loadVideoIds(ids) {
+      onReady(() => { try { yt.loadPlaylist({ playlist: ids, index: 0 }); } catch (_) {} });
+    },
     next() {
       onReady(() => yt.nextVideo());
     },
@@ -184,5 +188,5 @@ window.Player = (() => {
 })();
 
 window.onYouTubeIframeAPIReady = function () {
-  window.Player.init();
+  window.YTBackend.init();
 };

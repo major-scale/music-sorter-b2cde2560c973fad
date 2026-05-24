@@ -53,7 +53,8 @@ window.GithubSync = (() => {
     return btoa(bin);
   }
 
-  function filePath() { return `data/ratings-${getDeviceId()}.json`; }
+  // Round 2 rich pass syncs to its OWN files so the fresh pass never pulls in old v1 data.
+  function filePath() { return `data/ratings-round2-${getDeviceId()}.json`; }
 
   function headers(c) {
     return { Authorization: `Bearer ${c.token}`, Accept: "application/vnd.github+json" };
@@ -167,7 +168,7 @@ window.GithubSync = (() => {
     if (listResp.status === 404) return 0;
     if (!listResp.ok) throw new Error(`list ${listResp.status}`);
     const files = await listResp.json();
-    const ratingFiles = files.filter((f) => f.type === "file" && /^ratings-.*\.json$/.test(f.name));
+    const ratingFiles = files.filter((f) => f.type === "file" && /^ratings-round2-.*\.json$/.test(f.name));
     _log(`pullMerge: found ${ratingFiles.length} rating file(s):`, ratingFiles.map((f) => f.name).join(", "));
     let merged = 0;
     for (const f of ratingFiles) {
