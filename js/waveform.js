@@ -23,6 +23,56 @@ window.Waveform = (() => {
     let tag = r.element.querySelector(".seg-tag");
     if (!tag) { tag = document.createElement("span"); tag.className = "seg-tag"; r.element.appendChild(tag); }
     tag.textContent = ICON[label] || label;
+    attachRegionInteraction(r);
+  }
+
+  function seekTo(t) {
+    const a = audioEl(); const d = (ws && ws.getDuration && ws.getDuration()) || (a && a.duration) || 0;
+    if (a) { try { a.currentTime = Math.max(0, t); } catch (_) {} }
+    if (d && ws && ws.seekTo) { try { ws.seekTo(Math.max(0, Math.min(1, t / d))); } catch (_) {} }
+  }
+  // Marker interaction: TOP half = move whole marker (drag) / open menu (click);
+  // BOTTOM half = resize the near side (drag) / seek the playhead (click). Bound once per element.
+  function attachRegionInteraction(r) {
+    const el = r && r.element; if (!el || el._mk) return; el._mk = true;
+    el.addEventListener("pointermove", (ev) => {                 // hover cursor hint
+      if (ev.buttons) return;
+      const rc = el.getBoundingClientRect();
+      el.style.cursor = (ev.clientY - rc.top) < rc.height * 0.5 ? "move" : "ew-resize";
+    });
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button) return;
+      const rc = el.getBoundingClientRect();
+      const topHalf = (e.clientY - rc.top) < rc.height * 0.5;
+      const leftHalf = (e.clientX - rc.left) < rc.width * 0.5;
+      const downX = e.clientX, downTime = timeAtClientX(downX), s0 = r.start, e0 = r.end;
+      e.stopPropagation(); e.preventDefault();
+      let moved = false;
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}
+      const onMove = (ev) => {
+        if (!moved && Math.abs(ev.clientX - downX) < 4) return;
+        moved = true;
+        const t = timeAtClientX(ev.clientX);
+        if (topHalf) {                                           // move the whole marker (both ends)
+          const total = ws.getDuration() || 0, dt = t - downTime;
+          let ns = s0 + dt, ne = e0 + dt;
+          if (ns < 0) { ne -= ns; ns = 0; }
+          if (total && ne > total) { ns -= (ne - total); ne = total; }
+          try { r.update({ start: Math.max(0, ns), end: ne }); } catch (_) {}
+        } else if (leftHalf) {                                   // resize the left side
+          try { r.update({ start: Math.max(0, Math.min(t, e0 - 0.1)) }); } catch (_) {}
+        } else {                                                 // resize the right side
+          try { r.update({ end: Math.max(s0 + 0.1, t) }); } catch (_) {}
+        }
+      };
+      const onUp = () => {
+        el.removeEventListener("pointermove", onMove); el.removeEventListener("pointerup", onUp);
+        try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+        if (!moved) { if (topHalf) showRegionMenu(r, e); else seekTo(downTime); }   // click: top = menu, bottom = seek
+        else updateMarkers();
+      };
+      el.addEventListener("pointermove", onMove); el.addEventListener("pointerup", onUp);
+    });
   }
 
   // ---- per-marker popover: add a nested marker / delete. Moving = just drag the marker; resizing = drag its edges. ----
@@ -94,7 +144,7 @@ window.Waveform = (() => {
     if (!ws || !ws.regions || !ws.regions.list) { el.innerHTML = ""; return; }
     const all = Object.values(ws.regions.list);
     const regs = all.slice().sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, drag on the waveform to mark a range. Drag a marker to move it (edges to resize); click it for ⊕ inner / ✕ delete.</span>'; return; }
+    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, drag on the waveform to mark a range. On a marker: top half = move (drag) / menu (click), bottom half = resize a side (drag) / seek (click).</span>'; return; }
     el.innerHTML = regs.map((r) => {
       const lab = (r.data && r.data.label) || "?";
       const span = (r.end - r.start) > 1 ? (fmt(r.start) + "–" + fmt(r.end)) : fmt(r.start);
@@ -110,7 +160,7 @@ window.Waveform = (() => {
     const a = audioEl();
     if (!container || !a) return;
     try {
-      regions = WaveSurfer.regions.create({ dragSelection: { slop: 5 } });   // drag a marker = move it; click a marker = menu (⊕ add inner / ✕ delete)
+      regions = WaveSurfer.regions.create({ dragSelection: { slop: 5, drag: false, resize: false } });   // custom interaction (top half = move, bottom = resize/seek) handles regions instead of WaveSurfer
       const plugins = [regions];
       const mapEl = document.getElementById("waveform-map");
       if (mapEl && WaveSurfer.minimap) {
@@ -134,7 +184,6 @@ window.Waveform = (() => {
       ws.on("region-updated", renderList);
       ws.on("region-update-end", updateMarkers);   // nesting may have changed after a drag/resize
       ws.on("region-removed", updateMarkers);
-      ws.on("region-click", (r, e) => showRegionMenu(r, e));   // click a marker → its menu (topmost/innermost wins via z-index)
       ws.on("ready", () => { wsReady = true; setZoom(100); if (pendingRestore) { const pr = pendingRestore; pendingRestore = null; applyRestore(pr); } });
       const ml = document.getElementById("marker-list");          // delete via the list (no waveform interference)
       if (ml) ml.addEventListener("click", (e) => { const b = e.target.closest(".ml-x"); if (b && ws.regions.list[b.dataset.rid]) ws.regions.list[b.dataset.rid].remove(); });
@@ -168,7 +217,7 @@ window.Waveform = (() => {
     if (!ws) return;
     if (ws.clearRegions) ws.clearRegions();
     (pr.neutrals || []).forEach((t) => { const r = ws.addRegion({ start: t, end: t + 0.12, color: colorFor("neutral"), drag: false, resize: false, data: { label: "neutral" } }); styleRegion(r, "neutral"); });
-    (pr.segments || []).forEach((s) => { const r = ws.addRegion({ start: s.start_s, end: s.end_s, color: colorFor(s.label), drag: true, resize: true, data: { label: s.label } }); styleRegion(r, s.label); });
+    (pr.segments || []).forEach((s) => { const r = ws.addRegion({ start: s.start_s, end: s.end_s, color: colorFor(s.label), drag: false, resize: false, data: { label: s.label } }); styleRegion(r, s.label); });
     anchorSec = (pr.neutrals && pr.neutrals.length) ? pr.neutrals[0] : null;
     updateMarkers();
   }
@@ -202,8 +251,8 @@ window.Waveform = (() => {
       if (!ws) return;
       activeLabel = label;
       const t = curT();
-      const r = ws.addRegion({ start: t, end: t + 0.05,   // point at the playhead; drag to move, edges to widen
-        color: colorFor(label), drag: true, resize: true, data: { label } });
+      const r = ws.addRegion({ start: t, end: t + 0.05,   // point at the playhead; top-drag moves, bottom-drag resizes
+        color: colorFor(label), drag: false, resize: false, data: { label } });
       styleRegion(r, label); updateMarkers();
     },
     setAnchor() {
