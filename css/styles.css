@@ -627,3 +627,9 @@ body.round2-mode .seg-mark { font-size: 14px; padding: 8px 14px; }
 /* nested rating windows (inner = a band inside the parent) */
 .wavesurfer-region.nested-region { top: 22% !important; height: 56% !important; border: 2px solid #fff !important; border-radius: 4px; box-shadow: 0 0 0 1px rgba(0,0,0,.5); z-index: 5 !important; }
 .ml-chip.ml-nested { margin-left: 22px; }
+
+/* per-marker popover menu */
+.region-menu { position: fixed; z-index: 9999; background: var(--surface-2, #232323); border: 1px solid var(--border); border-radius: 10px; padding: 6px; display: none; box-shadow: 0 8px 28px rgba(0,0,0,.55); min-width: 200px; }
+.region-menu .rm-title { font-size: 11px; color: var(--text-dim); padding: 2px 8px 6px; }
+.region-menu button { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text); padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.region-menu button:hover { background: var(--surface); }

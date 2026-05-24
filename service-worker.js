@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v25-2026-05-23-nested-windows";
+const VERSION = "v26-2026-05-23-marker-menu";
 const SHELL = [
   "./",
   "./index.html",

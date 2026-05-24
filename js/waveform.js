@@ -23,6 +23,42 @@ window.Waveform = (() => {
     let tag = r.element.querySelector(".seg-tag");
     if (!tag) { tag = document.createElement("span"); tag.className = "seg-tag"; r.element.appendChild(tag); }
     tag.textContent = ICON[label] || label;
+    r.element.style.cursor = "pointer";
+    r.element.onclick = (e) => showRegionMenu(r, e);              // click a marker → local menu (topmost/innermost wins via z-index)
+  }
+
+  // ---- per-marker popover: edit/nest without the drag-moves-it problem ----
+  let menuEl = null;
+  function closeMenu() { if (menuEl) menuEl.style.display = "none"; }
+  function showRegionMenu(r, ev) {
+    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+    if (!menuEl) {
+      menuEl = document.createElement("div"); menuEl.className = "region-menu"; document.body.appendChild(menuEl);
+      document.addEventListener("click", (e) => { if (menuEl && menuEl.style.display === "block" && !menuEl.contains(e.target)) closeMenu(); }, true);
+    }
+    const lab = (r.data && r.data.label) || "?";
+    const span = fmt(r.start) + ((r.end - r.start) > 1 ? "–" + fmt(r.end) : "");
+    menuEl.innerHTML = '<div class="rm-title">' + (ICON[lab] || "") + " " + lab + " " + span + '</div>' +
+      '<button data-act="inner">⊕ add inner marker</button>' +
+      '<button data-act="start">⟕ set start = ▶ playhead</button>' +
+      '<button data-act="end">⟖ set end = ▶ playhead</button>' +
+      '<button data-act="del">✕ delete</button>';
+    menuEl.querySelectorAll("button").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); regionAct(r, b.dataset.act); closeMenu(); }; });
+    const x = Math.max(8, Math.min((ev && ev.clientX) || 40, window.innerWidth - 220));
+    const y = Math.max(8, Math.min((ev && ev.clientY) || 40, window.innerHeight - 200));
+    menuEl.style.left = x + "px"; menuEl.style.top = y + "px"; menuEl.style.display = "block";
+  }
+  function regionAct(r, act) {
+    if (!r) return;
+    if (act === "del") { r.remove(); return; }
+    if (act === "inner") {
+      const t = Math.max(r.start, Math.min(curT(), r.end - 0.5));
+      const nr = ws.addRegion({ start: t, end: Math.min(r.end, t + 2), color: colorFor(activeLabel), drag: false, resize: false, data: { label: activeLabel } });
+      styleRegion(nr, activeLabel); updateMarkers(); return;
+    }
+    if (act === "start") { const t = Math.max(0, Math.min(curT(), r.end - 0.1)); try { r.update({ start: t }); } catch (_) { r.start = t; r.updateRender && r.updateRender(); } }
+    if (act === "end") { const t = Math.max(r.start + 0.1, curT()); try { r.update({ end: t }); } catch (_) { r.end = t; r.updateRender && r.updateRender(); } }
+    updateMarkers();
   }
 
   const NESTABLE = (r) => r && r.data && r.data.label && r.data.label !== "neutral";
@@ -50,7 +86,7 @@ window.Waveform = (() => {
     if (!ws || !ws.regions || !ws.regions.list) { el.innerHTML = ""; return; }
     const all = Object.values(ws.regions.list);
     const regs = all.slice().sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, then drag on the waveform (tap a label <em>inside</em> a window for a nested moment)</span>'; return; }
+    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, drag on the waveform to mark a range. Drag <em>inside</em> a marker to nest one; click a marker to edit/delete.</span>'; return; }
     el.innerHTML = regs.map((r) => {
       const lab = (r.data && r.data.label) || "?";
       const span = (r.end - r.start) > 1 ? (fmt(r.start) + "–" + fmt(r.end)) : fmt(r.start);
@@ -66,7 +102,7 @@ window.Waveform = (() => {
     const a = audioEl();
     if (!container || !a) return;
     try {
-      regions = WaveSurfer.regions.create({ dragSelection: { slop: 5 } });
+      regions = WaveSurfer.regions.create({ dragSelection: { slop: 5, drag: false, resize: false } });   // created regions are NOT movable → click = menu, drag INSIDE one = a nested marker
       const plugins = [regions];
       const mapEl = document.getElementById("waveform-map");
       if (mapEl && WaveSurfer.minimap) {
@@ -123,7 +159,7 @@ window.Waveform = (() => {
     if (!ws) return;
     if (ws.clearRegions) ws.clearRegions();
     (pr.neutrals || []).forEach((t) => { const r = ws.addRegion({ start: t, end: t + 0.12, color: colorFor("neutral"), drag: false, resize: false, data: { label: "neutral" } }); styleRegion(r, "neutral"); });
-    (pr.segments || []).forEach((s) => { const r = ws.addRegion({ start: s.start_s, end: s.end_s, color: colorFor(s.label), drag: true, resize: true, data: { label: s.label } }); styleRegion(r, s.label); });
+    (pr.segments || []).forEach((s) => { const r = ws.addRegion({ start: s.start_s, end: s.end_s, color: colorFor(s.label), drag: false, resize: false, data: { label: s.label } }); styleRegion(r, s.label); });
     anchorSec = (pr.neutrals && pr.neutrals.length) ? pr.neutrals[0] : null;
     updateMarkers();
   }
@@ -157,8 +193,8 @@ window.Waveform = (() => {
       if (!ws) return;
       activeLabel = label;
       const t = curT();
-      const r = ws.addRegion({ start: t, end: t + 0.05,   // zero-width point at the playhead; expand by dragging an edge
-        color: colorFor(label), drag: true, resize: true, data: { label } });
+      const r = ws.addRegion({ start: t, end: t + 0.05,   // point at the playhead; widen / move via its click-menu
+        color: colorFor(label), drag: false, resize: false, data: { label } });
       styleRegion(r, label); updateMarkers();
     },
     setAnchor() {
