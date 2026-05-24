@@ -68,6 +68,11 @@ window.Waveform = (() => {
       styleRegion(nr, activeLabel); updateMarkers();
     }
   }
+  function seekTo(t) {
+    const a = audioEl(); const d = (ws && ws.getDuration && ws.getDuration()) || (a && a.duration) || 0;
+    if (a) { try { a.currentTime = Math.max(0, t); } catch (_) {} }
+    if (d && ws && ws.seekTo) { try { ws.seekTo(Math.max(0, Math.min(1, t / d))); } catch (_) {} }
+  }
 
   const NESTABLE = (r) => r && r.data && r.data.label && r.data.label !== "neutral";
   function enclosingOf(r, all) {            // innermost OTHER content region strictly containing r = its nesting parent
@@ -94,7 +99,7 @@ window.Waveform = (() => {
     if (!ws || !ws.regions || !ws.regions.list) { el.innerHTML = ""; return; }
     const all = Object.values(ws.regions.list);
     const regs = all.slice().sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, drag on the waveform to mark a range. Drag a marker to move it (edges to resize); click it for ⊕ inner / ✕ delete.</span>'; return; }
+    if (!regs.length) { el.innerHTML = '<span class="ml-empty">no markers yet — pick a type, drag on the waveform to mark a range. Drag a marker to move (edges resize); click its TOP half for the menu, BOTTOM half to seek.</span>'; return; }
     el.innerHTML = regs.map((r) => {
       const lab = (r.data && r.data.label) || "?";
       const span = (r.end - r.start) > 1 ? (fmt(r.start) + "–" + fmt(r.end)) : fmt(r.start);
@@ -134,7 +139,12 @@ window.Waveform = (() => {
       ws.on("region-updated", renderList);
       ws.on("region-update-end", updateMarkers);   // nesting may have changed after a drag/resize
       ws.on("region-removed", updateMarkers);
-      ws.on("region-click", (r, e) => showRegionMenu(r, e));   // click a marker → its menu (topmost/innermost wins via z-index)
+      ws.on("region-click", (r, e) => {                          // TOP half = the marker menu · BOTTOM half = seek the playhead
+        const el = r.element, rc = el && el.getBoundingClientRect();
+        const topHalf = !rc || (e.clientY - rc.top) < rc.height * 0.5;
+        if (topHalf) showRegionMenu(r, e);
+        else { if (e && e.stopPropagation) e.stopPropagation(); seekTo(timeAtClientX(e.clientX)); }
+      });
       ws.on("ready", () => { wsReady = true; setZoom(100); if (pendingRestore) { const pr = pendingRestore; pendingRestore = null; applyRestore(pr); } });
       const ml = document.getElementById("marker-list");          // delete via the list (no waveform interference)
       if (ml) ml.addEventListener("click", (e) => { const b = e.target.closest(".ml-x"); if (b && ws.regions.list[b.dataset.rid]) ws.regions.list[b.dataset.rid].remove(); });

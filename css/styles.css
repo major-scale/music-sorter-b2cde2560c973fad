@@ -639,3 +639,6 @@ body.round2-mode .seg-mark { font-size: 14px; padding: 8px 14px; }
 .wavesurfer-region:hover .wavesurfer-handle { background: #fff !important; }
 .wavesurfer-region.nested-region { z-index: 12 !important; }
 .wavesurfer-region.nested-region .wavesurfer-handle { background: #fff !important; }
+
+/* marker midline: top half = menu (click), bottom half = seek (click) */
+.wavesurfer-region::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgba(255,255,255,.4); pointer-events: none; }
