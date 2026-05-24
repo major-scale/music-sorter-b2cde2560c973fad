@@ -40,8 +40,7 @@ window.Waveform = (() => {
     const span = fmt(r.start) + ((r.end - r.start) > 1 ? "–" + fmt(r.end) : "");
     menuEl.innerHTML = '<div class="rm-title">' + (ICON[lab] || "") + " " + lab + " " + span + '</div>' +
       '<button data-act="inner">⊕ add inner marker</button>' +
-      '<button data-act="start">⟕ set start = ▶ playhead</button>' +
-      '<button data-act="end">⟖ set end = ▶ playhead</button>' +
+      '<button data-act="move">↦ move here (to ▶ playhead)</button>' +
       '<button data-act="del">✕ delete</button>';
     menuEl.querySelectorAll("button").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); regionAct(r, b.dataset.act); closeMenu(); }; });
     const x = Math.max(8, Math.min((ev && ev.clientX) || 40, window.innerWidth - 220));
@@ -56,8 +55,13 @@ window.Waveform = (() => {
       const nr = ws.addRegion({ start: t, end: Math.min(r.end, t + 2), color: colorFor(activeLabel), drag: false, resize: false, data: { label: activeLabel } });
       styleRegion(nr, activeLabel); updateMarkers(); return;
     }
-    if (act === "start") { const t = Math.max(0, Math.min(curT(), r.end - 0.1)); try { r.update({ start: t }); } catch (_) { r.start = t; r.updateRender && r.updateRender(); } }
-    if (act === "end") { const t = Math.max(r.start + 0.1, curT()); try { r.update({ end: t }); } catch (_) { r.end = t; r.updateRender && r.updateRender(); } }
+    if (act === "move") {                                  // shift the WHOLE marker (both ends) to start at the playhead
+      const span = r.end - r.start;
+      const total = (ws && ws.getDuration && ws.getDuration()) || (audioEl() && audioEl().duration) || 0;
+      let ns = Math.max(0, curT());
+      if (total) ns = Math.min(ns, Math.max(0, total - span));
+      try { r.update({ start: ns, end: ns + span }); } catch (_) { r.start = ns; r.end = ns + span; r.updateRender && r.updateRender(); }
+    }
     updateMarkers();
   }
 
