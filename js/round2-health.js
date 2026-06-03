@@ -8,7 +8,7 @@ window.round2Health = function () {
   const all = R.getAll();   // all v2 records (test + rich-v1)
   const comps = R.getComparisons ? R.getComparisons() : [];
   const CONF = ["sure", "think_so", "guess"], FAM = ["novel", "known"];
-  const CLASS = ["LOVE", "MID", "SLOP"], SEGL = ["love", "mid", "slop"];
+  const CLASS = ["LOVE", "MID", "SLOP"], SEGL = ["hate", "dislike", "mid", "like", "love", "slop"];  // 5-pt segments; 'slop' = legacy 158-batch
   const VERD = [-2, -1, 0, 1, 2];
   const anomalies = [];
   let withSeg = 0, segTotal = 0, withConf = 0, withFam = 0, withAnchor = 0;

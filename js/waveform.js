@@ -8,8 +8,9 @@
 
 window.Waveform = (() => {
   let ws = null, regions = null, activeLabel = "love", anchorSec = null, wsReady = false, pendingRestore = null;
-  const SOLID = { love: "#3ad29f", mid: "#d8b13a", slop: "#d9534f", neutral: "#ffffff" };
-  const ICON = { love: "♥", mid: "~", slop: "✗", neutral: "⚓" };
+  // 5-point quality scale (1 hate … 5 love); 'slop' retained so the original 158-track batch still renders (backward-compat).
+  const SOLID = { love: "#3ad29f", like: "#6fc043", mid: "#d8b13a", dislike: "#e8923a", hate: "#d9534f", slop: "#d9534f", neutral: "#ffffff" };
+  const ICON = { love: "♥", like: "▲", mid: "~", dislike: "▼", hate: "✗", slop: "✗", neutral: "⚓" };
   const colorFor = (l) => (SOLID[l] || "#8a8a8a") + "59";          // ~35% alpha fill
   const audioEl = () => document.getElementById("local-audio");
 

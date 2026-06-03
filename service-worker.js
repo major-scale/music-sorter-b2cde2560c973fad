@@ -1,5 +1,5 @@
 // App-shell caching only. YouTube embeds + IFrame API are network-passthrough.
-const VERSION = "v30-2026-05-24-click-split";
+const VERSION = "v31-2026-05-25-5pt-segments";
 const SHELL = [
   "./",
   "./index.html",
